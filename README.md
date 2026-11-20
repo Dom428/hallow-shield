@@ -15,12 +15,13 @@ An ad and tracker blocker for **Chrome, Edge, Brave, Opera and Firefox** - part 
 
 ## Install
 
-Download the zip for your browser from the latest build (Actions > Build > **hallow-shield** artifact) and unzip it:
+Download the zip for your browser from the [latest release](https://github.com/Dom428/hallow-shield/releases/latest)
+(`hallow-shield-chrome-1.0.zip` or `hallow-shield-firefox-1.0.zip`) and unzip it into a folder of its own:
 
 - **Chrome, Edge, Brave, Opera:** open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode**,
-  click **Load unpacked** and pick the unzipped `hallow-shield-chrome` folder.
+  click **Load unpacked** and pick that folder. Keep the folder - the browser loads Shield from it.
 - **Firefox:** open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, pick `manifest.json` in the
-  unzipped `hallow-shield-firefox` folder (temporary until the add-on is signed on addons.mozilla.org). Firefox asks you
+  unzipped folder (temporary until the add-on is signed on addons.mozilla.org). Firefox asks you
   to allow access to all sites - Shield needs it to hide ad boxes.
 
 ## Honest limits

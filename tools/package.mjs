@@ -24,5 +24,5 @@ pack('chrome', mf);
 const ff = structuredClone(mf);
 ff.background = { scripts: ['background.js'], type: 'module' };
 delete ff.minimum_chrome_version;
-ff.browser_specific_settings = { gecko: { id: 'shield@hallow.app', strict_min_version: '128.0', data_collection_permissions: { required: ['none'] } } };
+ff.browser_specific_settings = { gecko: { id: 'hallow-shield@dom428.github.io', strict_min_version: '128.0', data_collection_permissions: { required: ['none'] } } };
 pack('firefox', ff);
