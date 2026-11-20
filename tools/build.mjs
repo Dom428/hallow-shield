@@ -11,7 +11,8 @@ import { convertList, validRule } from './convert.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'extension', 'rules');
 const LISTS = { ads: 'https://easylist.to/easylist/easylist.txt', privacy: 'https://easylist.to/easylist/easyprivacy.txt' };
-const BUDGET = { ads: 22000, privacy: 8000 };   // Chrome guarantees every extension 30,000 static rules; plain domains share one rule per 1,000
+const TOTAL = 30000;   // Chrome guarantees every extension 30,000 static rules; plain domains share one rule per 1,000
+let used = 0;          // ads first, privacy gets whatever ads didn't need
 
 const arg = k => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : null; };
 async function read(key) {
@@ -27,13 +28,15 @@ const meta = { built: new Date().toISOString(), lists: {}, allow: {}, rules: {},
 const generic = new Set(), sites = {}, except = {};
 for (const key of ['ads', 'privacy']) {
   const text = await read(key);
-  const { rules, cosmetic, stats } = convertList(text, { maxRules: BUDGET[key] });
+  const { rules, cosmetic, stats } = convertList(text, { maxRules: key === 'ads' ? 22000 : TOTAL - used });
+  used += rules.length;
   const bad = rules.filter(r => !validRule(r));
   if (bad.length) throw new Error(`${key}: ${bad.length} rules Chrome would refuse, e.g. ${JSON.stringify(bad[0])}`);
   fs.writeFileSync(path.join(OUT, key + '.json'), JSON.stringify(rules));
   meta.lists[key] = { source: arg(key) ? 'local file' : LISTS[key], version: version(text), lines: stats.lines };
   meta.allow[key] = rules.filter(r => r.action.type !== 'block').length;
   meta.rules[key] = rules.length;
+  meta.domains = meta.domains || {}; meta.domains[key] = stats.domainsMerged; meta.dropped = meta.dropped || {}; meta.dropped[key] = stats.dropped;
   for (const sel of cosmetic.generic) generic.add(sel);
   for (const [d, list] of Object.entries(cosmetic.sites)) (sites[d] ||= []).push(...list);
   for (const [d, list] of Object.entries(cosmetic.except)) (except[d] ||= []).push(...list);

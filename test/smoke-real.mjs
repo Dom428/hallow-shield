@@ -11,7 +11,8 @@ const { chromium } = await import('playwright').catch(() => createRequire(import
 
 const EXT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'extension');
 const meta = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'meta.json'), 'utf8'));
-assert.ok(meta.rules.ads > 5000 && meta.rules.privacy > 3000, 'real lists converted: ' + JSON.stringify(meta.rules));
+assert.ok(meta.domains.ads > 20000 && meta.domains.privacy > 20000 && meta.rules.ads > 1000 && meta.rules.privacy > 1000, 'real lists converted: ' + JSON.stringify({ rules: meta.rules, domains: meta.domains }));
+assert.ok(meta.rules.ads + meta.rules.privacy <= 30000, 'within Chrome\'s 30,000 rules');
 const seen = [];
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://' + req.headers.host); seen.push(u.hostname + u.pathname);
@@ -34,4 +35,4 @@ assert.ok(seen.includes('cdn.example.org/app.js'), 'a normal script loads');
 assert.ok(!seen.some(s => s.includes('doubleclick.net')), 'doubleclick.net blocked');
 assert.ok(!seen.some(s => s.includes('google-analytics.com')), 'google-analytics.com blocked');
 await ctx.close(); server.close();
-console.log('real rules OK:', JSON.stringify(meta.rules), 'lists', JSON.stringify(Object.fromEntries(Object.entries(meta.lists).map(([k, v]) => [k, v.version]))));
+console.log('real rules OK:', JSON.stringify({ rules: meta.rules, domains: meta.domains, dropped: meta.dropped }), 'lists', JSON.stringify(Object.fromEntries(Object.entries(meta.lists).map(([k, v]) => [k, v.version]))));

@@ -28,8 +28,9 @@ Download the zip for your browser from the [latest release](https://github.com/D
 
 - **YouTube ads** change their tricks constantly and need code that runs inside the page; Shield doesn't promise to block
   them. [uBlock Origin Lite](https://github.com/uBlockOrigin/uBOL-home) is the reference for that.
-- Chrome guarantees every extension **30,000** blocking rules; Shield uses up to 20,000 from EasyList and 10,000 from
-  EasyPrivacy, the most specific ones first. Filters the browser can't express (regular expressions, redirects,
+- Chrome guarantees every extension **30,000** blocking rules. Plain "block this domain" filters share one rule per 1,000
+  domains, so all of EasyList's and EasyPrivacy's ad and tracker domains (about 94,000) fit; the other filters get the
+  rest of the budget, the most specific first. Filters the browser can't express (regular expressions, redirects,
   scriptlets, `$csp`, `$popup`, procedural cosmetics) are left out - `rules/meta.json` and the build log say how many.
 
 ## Building
