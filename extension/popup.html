@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><link rel="stylesheet" href="popup.css"><title>Hallow Shield</title></head>
+<body>
+  <header><img src="icons/32.png" alt=""><span class="brand">HALLOW</span> SHIELD</header>
+  <section class="site">
+    <div id="site" class="host">-</div>
+    <div id="count" class="count">-</div>
+    <div id="countText" class="muted">blocked on this page</div>
+    <button id="pause" class="big">Pause on this site</button>
+    <p id="note" class="muted small"></p>
+  </section>
+  <section class="switches">
+    <label><input type="checkbox" id="ads"> Block ads</label>
+    <label><input type="checkbox" id="privacy"> Block trackers</label>
+    <label><input type="checkbox" id="hide"> Hide empty ad boxes</label>
+  </section>
+  <footer class="muted small">The browser blocks them itself - Hallow Shield never sees or sends what you browse.<br>
+    Filter lists: <a href="https://easylist.to/" target="_blank" rel="noopener">EasyList and EasyPrivacy</a> (CC BY-SA 3.0).</footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# built from the filter lists by tools/build.mjs (CI builds them fresh)
+extension/rules/*.json
+extension/rules/*.css
+extension/_metadata/

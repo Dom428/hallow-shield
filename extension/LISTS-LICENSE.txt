@@ -1,0 +1,10 @@
+Hallow Shield's blocking rules (rules/*.json, rules/generic.css, rules/sites.json) are converted from:
+
+  EasyList     https://easylist.to/   by The EasyList authors
+  EasyPrivacy  https://easylist.to/   by The EasyList authors
+
+The EasyList filter lists are dual licensed under the GNU General Public License version 3 and the Creative Commons
+Attribution-ShareAlike 3.0 Unported license (https://creativecommons.org/licenses/by-sa/3.0/). The converted rule
+files are shared under the same Creative Commons Attribution-ShareAlike 3.0 license. They were changed: converted to the
+browser's declarativeNetRequest format and CSS, and filters the browser can't use were left out.
+rules/meta.json names the list versions used.

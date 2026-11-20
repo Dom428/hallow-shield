@@ -1,0 +1,20 @@
+[Adblock Plus 2.0]
+! Version: test-1
+! Title: Hallow Shield test list (written for the tests - not EasyList)
+||ads.example^
+||tracker-ads.test/banner/*$image,third-party
+/adserver/script.js$script
+||popups.example^$popup
+/^https?:\/\/regex\.example\//
+||cdn.example/ad-$~image
+@@||ads.example/allowed.js$script
+@@||trusted.example^$document
+||wild.example^$domain=news.*
+||safe.example^$domain=news.test|~blog.news.test
+##.ad-banner
+##div[id^="sponsor-"]
+news.test##.sponsored
+news.test#@#.ad-banner
+example.org#?#.box:-abp-has(.ad)
+example.org##+js(nowebrtc)
+weird.example##.a:has-text(Ad)
