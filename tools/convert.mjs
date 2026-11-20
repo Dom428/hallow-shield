@@ -89,21 +89,49 @@ export function convertList(text, { maxRules = 30000 } = {}) {
     stats.network++;
     (n.rule.action.type === 'block' ? block : allow).push(n.rule);
   }
-  // exceptions first so they always fit; then blocks, the most specific (domain-anchored) first
-  block.sort((a, b) => score(b) - score(a));
-  const rules = [...allow, ...block].slice(0, maxRules).map((r, i) => ({ id: i + 1, ...r }));
-  stats.dropped = allow.length + block.length - rules.length;
+  // Plain domain filters ("||ads.example^" with the same options) become ONE rule with a list of domains: lists hold tens
+  // of thousands of them, and Chrome only guarantees 30,000 rules - one rule per domain would leave most ad servers out.
+  const mergedAllow = mergeDomains(allow), mergedBlock = mergeDomains(block);
+  // exceptions first so they always fit; then the domain lists; then the rest, the most specific (domain-anchored) first
+  mergedBlock.rest.sort((a, b) => score(b) - score(a));
+  const ordered = [...mergedAllow.merged, ...mergedAllow.rest, ...mergedBlock.merged, ...mergedBlock.rest];
+  const rules = ordered.slice(0, maxRules).map((r, i) => ({ id: i + 1, ...r }));
+  stats.dropped = ordered.length - rules.length;
   stats.rules = rules.length;
+  stats.domainsMerged = mergedAllow.domains + mergedBlock.domains;
   return { rules, cosmetic: { generic: [...generic], sites, except }, stats };
 }
 const score = r => (r.condition.urlFilter.startsWith('||') ? 2 : 0) + (r.condition.urlFilter.endsWith('^') ? 1 : 0);
+
+// "||example.com^" (or "^|") matches example.com and its subdomains - exactly what requestDomains does
+const PLAIN = /^\|\|([a-z0-9-]+(?:\.[a-z0-9-]+)+)\^\|?$/;
+export const DOMAINS_PER_RULE = 1000;
+export function mergeDomains(list) {
+  const groups = new Map(), rest = []; let domains = 0;
+  for (const r of list) {
+    const m = r.action.type !== 'allowAllRequests' && !r.condition.isUrlFilterCaseSensitive && r.condition.urlFilter.match(PLAIN);
+    if (!m) { rest.push(r); continue; }
+    const { urlFilter, ...cond } = r.condition;
+    const key = JSON.stringify([r.priority, r.action, cond]);
+    if (!groups.has(key)) groups.set(key, { priority: r.priority, action: r.action, cond, list: new Set() });
+    groups.get(key).list.add(m[1]);
+  }
+  const merged = [];
+  for (const g of groups.values()) {
+    const all = [...g.list]; domains += all.length;
+    for (let i = 0; i < all.length; i += DOMAINS_PER_RULE)
+      merged.push({ priority: g.priority, action: g.action, condition: { ...g.cond, requestDomains: all.slice(i, i + DOMAINS_PER_RULE) } });
+  }
+  return { merged, rest, domains };
+}
 
 // structural check of a DNR rule (what Chrome would refuse to load)
 export function validRule(r) {
   if (!Number.isInteger(r.id) || r.id < 1) return false;
   if (!['block', 'allow', 'allowAllRequests'].includes(r.action?.type)) return false;
-  const c = r.condition; if (!c || typeof c.urlFilter !== 'string' || !c.urlFilter || !isAscii(c.urlFilter)) return false;
-  if (c.urlFilter.startsWith('||*')) return false;
+  const c = r.condition; if (!c) return false;
+  if (c.requestDomains !== undefined) { if (!Array.isArray(c.requestDomains) || !c.requestDomains.length || c.requestDomains.length > DOMAINS_PER_RULE || !c.requestDomains.every(domainOk) || c.urlFilter !== undefined) return false; }
+  else { if (typeof c.urlFilter !== 'string' || !c.urlFilter || !isAscii(c.urlFilter) || c.urlFilter.startsWith('||*')) return false; }
   if (r.action.type === 'allowAllRequests' && c.resourceTypes.some(t => t !== 'main_frame' && t !== 'sub_frame')) return false;
   if (!Array.isArray(c.resourceTypes) || !c.resourceTypes.length) return false;
   return true;

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { networkRule, cosmeticRule, convertList, validRule } from '../tools/convert.mjs';
+import { networkRule, cosmeticRule, convertList, validRule, DOMAINS_PER_RULE } from '../tools/convert.mjs';
 import { hostsFor, siteCss, siteOf, pauseRule, validDomain } from '../extension/shared.js';
 
 test('a domain filter blocks everything a page loads from that domain, never the page itself', () => {
@@ -57,4 +57,20 @@ test('helpers: hosts, site CSS, sites, pause rule', () => {
   assert.equal(siteOf('https://www.News.test/a?b'), 'news.test'); assert.equal(siteOf('chrome://extensions'), null); assert.equal(siteOf('nonsense'), null);
   assert.deepEqual(pauseRule('news.test', 7).condition, { requestDomains: ['news.test'], resourceTypes: ['main_frame', 'sub_frame'] });
   assert.ok(validDomain('news.test') && !validDomain('localhost') && !validDomain('a b.test'));
+});
+
+test('plain domain filters with the same options share one rule (lists hold far more domains than Chrome allows rules)', () => {
+  const lines = [];
+  for (let i = 0; i < 2500; i++) lines.push(`||ad${i}.example^`);
+  for (let i = 0; i < 300; i++) lines.push(`||t${i}.example^$third-party`);
+  lines.push('||ad7.example^', '||Case.example^$match-case', '||prefix.example', '||ads.example/path^', '@@||ok1.example^', '@@||ok2.example^');
+  const { rules, stats } = convertList(lines.join('\n'), { maxRules: 100 });
+  assert.ok(rules.every(validRule), 'every rule valid');
+  const plain = rules.filter(r => r.action.type === 'block' && r.condition.requestDomains && !r.condition.domainType);
+  assert.equal(plain.length, 3); assert.equal(plain.reduce((n, r) => n + r.condition.requestDomains.length, 0), 2500, 'duplicates counted once');
+  assert.ok(plain.every(r => r.condition.requestDomains.length <= DOMAINS_PER_RULE));
+  const third = rules.find(r => r.condition.domainType === 'thirdParty'); assert.equal(third.condition.requestDomains.length, 300);
+  assert.equal(rules.filter(r => r.condition.urlFilter).length, 3, 'case-sensitive, no-^ and path filters stay single rules');
+  assert.equal(rules[0].action.type, 'allow'); assert.deepEqual(rules[0].condition.requestDomains, ['ok1.example', 'ok2.example']);
+  assert.equal(stats.dropped, 0); assert.equal(stats.domainsMerged, 2802);
 });

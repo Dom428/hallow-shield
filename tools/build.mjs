@@ -11,7 +11,7 @@ import { convertList, validRule } from './convert.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'extension', 'rules');
 const LISTS = { ads: 'https://easylist.to/easylist/easylist.txt', privacy: 'https://easylist.to/easylist/easyprivacy.txt' };
-const BUDGET = { ads: 20000, privacy: 10000 };   // Chrome guarantees every extension 30,000 static rules
+const BUDGET = { ads: 22000, privacy: 8000 };   // Chrome guarantees every extension 30,000 static rules; plain domains share one rule per 1,000
 
 const arg = k => { const i = process.argv.indexOf('--' + k); return i > 0 ? process.argv[i + 1] : null; };
 async function read(key) {
@@ -37,7 +37,7 @@ for (const key of ['ads', 'privacy']) {
   for (const sel of cosmetic.generic) generic.add(sel);
   for (const [d, list] of Object.entries(cosmetic.sites)) (sites[d] ||= []).push(...list);
   for (const [d, list] of Object.entries(cosmetic.except)) (except[d] ||= []).push(...list);
-  console.log(`${key}: ${rules.length} rules (${meta.allow[key]} exceptions), ${stats.dropped} over budget, ${cosmetic.generic.length} generic + ${Object.keys(cosmetic.sites).length} sites cosmetic; skipped:`, stats.skipped);
+  console.log(`${key}: ${rules.length} rules (${meta.allow[key]} exceptions, ${stats.domainsMerged} domains in domain-list rules), ${stats.dropped} over budget, ${cosmetic.generic.length} generic + ${Object.keys(cosmetic.sites).length} sites cosmetic; skipped:`, stats.skipped);
 }
 // one rule per selector: a selector one browser doesn't understand then only loses itself
 fs.writeFileSync(path.join(OUT, 'generic.css'), [...generic].map(s => `${s}{display:none!important}`).join('\n') + '\n');
