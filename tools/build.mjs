@@ -18,7 +18,9 @@ async function read(key) {
   const f = arg(key);
   if (f) return fs.readFileSync(f, 'utf8');
   const r = await fetch(LISTS[key]); if (!r.ok) throw new Error(`${LISTS[key]}: HTTP ${r.status}`);
-  return await r.text();
+  const t = await r.text();
+  fs.mkdirSync(path.join(ROOT, '.lists'), { recursive: true }); fs.writeFileSync(path.join(ROOT, '.lists', key + '.txt'), t);
+  return t;
 }
 const version = t => (t.match(/^! Version: (.+)$/m) || [])[1] || 'local';
 

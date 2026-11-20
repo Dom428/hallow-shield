@@ -28,6 +28,8 @@ jobs:
         run: npm run rules:sample && npm run e2e
       - name: Rules from the newest EasyList and EasyPrivacy
         run: npm run rules
+      - name: Explain doubleclick gpt.js
+        run: node tools/explain.mjs http://securepubads.g.doubleclick.net/tag/js/gpt.js http://news.example.org/page script
       - name: Chromium loads the real rules and blocks real ad servers
         run: node test/smoke-real.mjs
       - name: Pack for Chrome / Edge / Brave / Opera and Firefox

@@ -4,3 +4,4 @@ dist/
 extension/rules/*.json
 extension/rules/*.css
 extension/_metadata/
+.lists/
