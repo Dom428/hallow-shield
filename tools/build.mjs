@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { convertList, validRule, preprocess, badfilters, merge } from './convert.mjs';
 import { SCRIPTLETS, bundle, bundleMany } from './scriptlets.mjs';
 import { LISTS, POPUPS, RULESET_IDS, ENV } from './lists.mjs';
@@ -31,10 +32,10 @@ for (let i = 0; i < args.length; i++) if (args[i] === '--list') { const [k, v] =
 if (sample) Object.assign(given, { easylist: 'test/sample-ads.txt', easyprivacy: 'test/sample-privacy.txt', 'ublock-filters': 'test/sample-ublock.txt', ...given });
 const offline = sample || Object.keys(given).length > 0;
 
+// curl with retries (Node's fetch has crashed mid-download on CI runners)
 async function fetchText(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'HallowShield-build (+https://github.com/Dom428/hallow-shield)' } });
-  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-  return await r.text();
+  return execFileSync('curl', ['-fsSL', '--retry', '4', '--retry-all-errors', '--max-time', '120', '-A', 'HallowShield-build (+https://github.com/Dom428/hallow-shield)', url],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 // uBO lists pull in other files with "!#include file.txt" (relative to the list)
 async function withIncludes(text, base, depth = 0) {
