@@ -395,15 +395,77 @@ function removeClass(rawClasses, selector, behavior) {
   const sel = selector || classes.map(c => '.' + CSS.escape(c)).join(',');
   shieldWhen(behavior, () => { try { for (const el of document.querySelectorAll(sel)) el.classList.remove(...classes); } catch (e) { } }, ['class']);
 }
-function removeNodeText(nodeName, pattern) {
+// text of matching nodes (e.g. inline <script>s) replaced as the parser adds them; like uBO: nodes already there and
+// nodes added until the page is interactive (longer with quitAfter / "stay"), only those whose text has "includes"
+function shieldNodeText(nodeName, pattern, replacement, extra) {
   if (!nodeName) return;
-  const name = shieldRe(nodeName.startsWith('/') ? nodeName : '/^' + nodeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$/i'), test = shieldRe(pattern || '');
-  const check = n => { try { if (name.test(n.nodeName.toLowerCase()) && test.test(n.textContent)) n.textContent = ''; } catch (e) { } };
-  const scan = root => { check(root); if (root.querySelectorAll) for (const n of root.querySelectorAll('*')) { if (name.test(n.nodeName.toLowerCase())) check(n); } };
-  new MutationObserver(list => { for (const m of list) for (const n of m.addedNodes) { check(n); if (n.nodeType === 3) continue; if (n.childNodes) for (const c of n.childNodes) check(c); } })
-    .observe(document, { childList: true, subtree: true });
-  if (document.documentElement) scan(document.documentElement);
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rx = (p, flags, exact) => { const m = /^\/(.+)\/([dimsuy]*)$/.exec(p); try { return m ? new RegExp(m[1], m[2] || flags) : new RegExp(exact ? '^' + esc(p) + '$' : esc(p), flags); } catch (e) { return /(?!)/; } };
+  const name = rx(nodeName, 'i', true), pat = pattern ? rx(pattern, 'gms') : null;
+  const inc = extra.includes || extra.condition ? rx(extra.includes || extra.condition, 'ms') : null, exc = extra.excludes ? rx(extra.excludes, 'ms') : null;
+  const self = document.currentScript;
+  const handle = n => {
+    if (n === self || !name.test(n.nodeName)) return;
+    const before = n.textContent;
+    if (inc && !inc.test(before)) return;
+    if (exc && exc.test(before)) return;
+    if (pat) { pat.lastIndex = 0; if (!pat.test(before)) return; pat.lastIndex = 0; }
+    try { n.textContent = pat ? before.replace(pat, replacement || '') : (replacement || ''); } catch (e) { }
+  };
+  const tree = root => { const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) handle(n); };
+  if (document.documentElement) tree(document.documentElement);
+  const obs = new MutationObserver(list => { for (const m of list) for (const n of m.addedNodes) handle(n); });
+  obs.observe(document, { childList: true, subtree: true });
+  if (extra.stay) return;
+  const stop = () => { const left = obs.takeRecords(); obs.disconnect(); for (const m of left) for (const n of m.addedNodes) handle(n); };
+  const quit = () => { const q = Number(extra.quitAfter) || 0; if (q) setTimeout(stop, q); else stop(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', quit, { once: true }); else quit();
 }
+function removeNodeText(nodeName, includes, ...rest) { shieldNodeText(nodeName, '', '', Object.assign(shieldExtra(rest), { includes: includes || '' })); }
+function trustedReplaceNodeText(nodeName, pattern, replacement, ...rest) { shieldNodeText(nodeName, pattern, replacement, shieldExtra(rest)); }
+function noWebrtc() {
+  const Stub = function () { };
+  Stub.prototype = { close() { }, createDataChannel() { return {}; }, createOffer() { return Promise.resolve({}); }, setLocalDescription() { return Promise.resolve(); },
+    setRemoteDescription() { return Promise.resolve(); }, addIceCandidate() { return Promise.resolve(); }, addEventListener() { }, removeEventListener() { } };
+  for (const k of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection']) if (window[k]) window[k] = Stub;
+}
+function preventFab() {
+  const Det = function () { };
+  Det.prototype = {
+    check() { return this; }, emitEvent() { return this; }, clearEvent() { return this; }, setOption() { return this; }, options: {},
+    on(detected, fn) { if (!detected && typeof fn === 'function') setTimeout(() => { try { fn(); } catch (e) { } }, 1); return this; },
+    onDetected() { return this; }, onNotDetected(fn) { return this.on(false, fn); },
+  };
+  const inst = new Det();
+  window.fuckAdBlock = window.blockAdBlock = window.sniffAdBlock = inst;
+  window.FuckAdBlock = window.BlockAdBlock = window.SniffAdBlock = Det;
+}
+function shieldSetAttr(selector, attr, value, trusted) {
+  if (!selector || !attr || /^on/i.test(attr)) return;
+  let v = String(value === undefined ? '' : value);
+  if (!trusted && !['', 'true', 'false'].includes(v) && !/^\d{1,5}$/.test(v) && !/^\[[\w-]+\]$/.test(v)) return;
+  shieldWhen('stay', () => {
+    try {
+      for (const el of document.querySelectorAll(selector)) {
+        const nv = /^\[[\w-]+\]$/.test(v) ? el.getAttribute(v.slice(1, -1)) : v;
+        if (nv !== null && el.getAttribute(attr) !== nv) el.setAttribute(attr, nv);
+      }
+    } catch (e) { }
+  }, [attr]);
+}
+function setAttr(selector, attr, value) { shieldSetAttr(selector, attr, value, false); }
+function trustedSetAttr(selector, attr, value) { shieldSetAttr(selector, attr, value, true); }
+function trustedSetCookie(name, value, offset, path) {
+  if (!name || /[;\s]/.test(name)) return;
+  let exp = '';
+  const s = parseInt(offset, 10);
+  if (s > 0) exp = '; expires=' + new Date(Date.now() + s * 1000).toUTCString();
+  document.cookie = encodeURIComponent(name) + '=' + String(value === undefined ? '' : value).replace(/;/g, '') + exp + '; path=' + (path && path.startsWith('/') ? path : '/');
+}
+function trustedSetLocalStorageItem(key, value) { try { if (key) localStorage.setItem(key, String(value === undefined ? '' : value)); } catch (e) { } }
+function trustedSetSessionStorageItem(key, value) { try { if (key) sessionStorage.setItem(key, String(value === undefined ? '' : value)); } catch (e) { } }
+function windowCloseIf(pattern) { if (shieldNeedle(pattern || '')(location.href)) { try { window.close(); } catch (e) { } } }
+function alertBuster() { window.alert = new Proxy(window.alert, { apply() { } }); }
 const SHIELD_SAFE_VALUES = ['true', 'false', 'yes', 'y', 'no', 'n', 'ok', 'on', 'off', 'accept', 'accepted', 'reject', 'rejected', 'allow', 'allowed', 'deny', 'denied',
   'necessary', 'required', 'approved', 'disapproved', 'hide', 'hidden', 'essential', 'nonessential', 'checked', 'unchecked', 'forbidden', 'forever', 'dismiss', 'dismissed', ''];
 function setCookie(name, value, path) {
@@ -461,11 +523,15 @@ export const SCRIPTLETS = {
   'addEventListener-defuser': addEventListenerDefuser, 'no-window-open-if': noWindowOpenIf,
   'remove-attr': removeAttr, 'remove-class': removeClass, 'remove-node-text': removeNodeText,
   'set-cookie': setCookie, 'set-local-storage-item': setLocalStorageItem, 'set-session-storage-item': setSessionStorageItem, 'remove-cookie': removeCookie,
-  'noeval-if': noevalIf,
+  'noeval-if': noevalIf, 'trusted-replace-node-text': trustedReplaceNodeText, nowebrtc: noWebrtc, 'prevent-fab': preventFab,
+  'set-attr': setAttr, 'trusted-set-attr': trustedSetAttr, 'trusted-set-cookie': trustedSetCookie,
+  'trusted-set-local-storage-item': trustedSetLocalStorageItem, 'trusted-set-session-storage-item': trustedSetSessionStorageItem,
+  'window-close-if': windowCloseIf, 'alert-buster': alertBuster,
 };
 // helpers some scriptlets need on top of HELPERS
 export const EXTRA = { 'trusted-replace-fetch-response': [shieldReplacer], 'trusted-replace-xhr-response': [shieldReplacer],
-  'adjust-setTimeout': [shieldAdjust], 'adjust-setInterval': [shieldAdjust], 'set-local-storage-item': [shieldStorage], 'set-session-storage-item': [shieldStorage] };
+  'adjust-setTimeout': [shieldAdjust], 'adjust-setInterval': [shieldAdjust], 'set-local-storage-item': [shieldStorage], 'set-session-storage-item': [shieldStorage],
+  'remove-node-text': [shieldNodeText], 'trusted-replace-node-text': [shieldNodeText], 'set-attr': [shieldSetAttr], 'trusted-set-attr': [shieldSetAttr] };
 export const CONSTS = { 'set-cookie': `const SHIELD_SAFE_VALUES = ${JSON.stringify(SHIELD_SAFE_VALUES)};` };
 
 // the runner around a scriptlet: which arguments apply on this page (hostname, its parent domains, "name.*" entities)
@@ -478,12 +544,14 @@ function shieldRun(main, ARGS, HOSTS, EXC) {
   for (const k of keys) if (EXC[k]) { if (EXC[k].includes(-1)) use.clear(); else for (const i of EXC[k]) use.delete(i); }
   for (const i of use) { try { main(...ARGS[i]); } catch (e) { } }
 }
-// one bundle (a classic script, no module syntax) for one scriptlet
-export function bundle(name, data) {
-  const f = SCRIPTLETS[name];
-  const helpers = [...HELPERS, ...(EXTRA[name] || [])].map(h => h.toString()).join('\n');
-  return `// Hallow Shield scriptlet "${name}" - generated by tools/build.mjs from the filter lists; runs in the page (MAIN world).\n` +
-    `(function () {\n'use strict';\n` +
-    `${CONSTS[name] || ''}\n${helpers}\n${f.toString()}\n${shieldRun.toString()}\n` +
-    `shieldRun(${f.name}, ${JSON.stringify(data.args)}, ${JSON.stringify(data.hosts)}, ${JSON.stringify(data.exc)});\n})();\n`;
+// one bundle (a classic script, no module syntax) for one or more scriptlets: { name: { args, hosts, exc } }
+export function bundleMany(parts, title) {
+  const names = Object.keys(parts);
+  const helpers = [...new Set([...HELPERS, ...names.flatMap(n => EXTRA[n] || [])])].map(h => h.toString()).join('\n');
+  const consts = [...new Set(names.map(n => CONSTS[n]).filter(Boolean))].join('\n');
+  return `// Hallow Shield scriptlets (${title}) - generated by tools/build.mjs from the filter lists; runs in the page (MAIN world).\n` +
+    `(function () {\n'use strict';\n${consts}\n${helpers}\n${shieldRun.toString()}\n` +
+    names.map(n => `${SCRIPTLETS[n].toString()}\nshieldRun(${SCRIPTLETS[n].name}, ${JSON.stringify(parts[n].args)}, ${JSON.stringify(parts[n].hosts)}, ${JSON.stringify(parts[n].exc)});`).join('\n') +
+    `\n})();\n`;
 }
+export const bundle = (name, data) => bundleMany({ [name]: data }, name);

@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { convertList, validRule, preprocess, badfilters, merge } from './convert.mjs';
-import { SCRIPTLETS, bundle } from './scriptlets.mjs';
+import { SCRIPTLETS, bundle, bundleMany } from './scriptlets.mjs';
 import { LISTS, POPUPS, RULESET_IDS, ENV } from './lists.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -147,7 +147,7 @@ for (const s of sl) {
   if (!b.index.has(key)) { b.index.set(key, b.args.length); b.args.push(s.args); }
   const i = b.index.get(key);
   let any = false;
-  for (const d of s.inc) { if (!validHost(d) && !d.endsWith('.*')) continue; (b.hosts[d] ||= []).includes(i) || b.hosts[d].push(i); if (validHost(d)) any = true; }
+  for (const d of s.inc) { if (!validHost(d) && !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.\*$/.test(d)) continue; (b.hosts[d] ||= []).includes(i) || b.hosts[d].push(i); any = true; }
   for (const d of s.exc) (b.exc[d] ||= []).push(i);
   if (any) used[s.canonical] = (used[s.canonical] || 0) + 1;
   else skipped['(site not expressible) ' + s.canonical] = (skipped['(site not expressible) ' + s.canonical] || 0) + 1;
@@ -162,16 +162,33 @@ for (const s of sl) {
     for (const d of s.inc) (b.exc[d] ||= []).push(i);
   }
 }
-const registered = [];
+// only the entries for some host keys, with the argument list re-numbered
+const subset = (b, keys) => {
+  const map = new Map(), args = [], hosts = {}, exc = {};
+  const idx = i => { if (i < 0) return -1; if (!map.has(i)) { map.set(i, args.length); args.push(b.args[i]); } return map.get(i); };
+  for (const k of keys) hosts[k] = b.hosts[k].map(idx);
+  for (const [k, list] of Object.entries(b.exc)) { const l = list.filter(i => i < 0 || map.has(i)).map(i => i < 0 ? -1 : map.get(i)); if (l.length) exc[k] = l; }
+  return { args, hosts, exc };
+};
+const registered = [], entityParts = {};
 for (const [canon, b] of Object.entries(per)) {
   for (const g of globalOff) { const [c, i] = g.split(' '); if (c === canon) for (const k of Object.keys(b.hosts)) b.hosts[k] = b.hosts[k].filter(x => x !== Number(i)); }
-  const hosts = Object.keys(b.hosts).filter(h => b.hosts[h].length && validHost(h)).sort();
+  const live = Object.keys(b.hosts).filter(h => b.hosts[h].length);
+  const hosts = live.filter(validHost).sort(), entities = live.filter(h => h.endsWith('.*'));
+  if (entities.length) entityParts[canon] = subset(b, entities);
   if (!hosts.length) continue;
   const set = new Set(hosts);
   const top = hosts.filter(h => { const p = h.split('.'); for (let i = 1; i < p.length - 1; i++) if (set.has(p.slice(i).join('.'))) return false; return true; });
   const file = `rules/js/${canon}.js`;
-  fs.writeFileSync(path.join(ROOT, 'extension', file), bundle(canon, { args: b.args, hosts: b.hosts, exc: b.exc }));
+  fs.writeFileSync(path.join(ROOT, 'extension', file), bundle(canon, subset(b, hosts)));
   registered.push({ id: canon, file, matches: top.map(h => `*://*.${h}/*`) });
+}
+// filters for "name.*" sites can't be told to the browser as match patterns: one bundle for every page, which checks the
+// site itself and stops at once on all the others
+if (Object.keys(entityParts).length) {
+  const file = 'rules/js/_entities.js';
+  fs.writeFileSync(path.join(ROOT, 'extension', file), bundleMany(entityParts, 'sites named as name.*'));
+  registered.push({ id: '_entities', file, matches: ['*://*/*'] });
 }
 fs.writeFileSync(path.join(OUT, 'scriptlets.json'), JSON.stringify(registered));
 meta.scriptlets = { implemented: Object.keys(SCRIPTLETS).length, used, skipped, bundles: registered.length,

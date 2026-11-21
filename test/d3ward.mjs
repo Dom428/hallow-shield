@@ -12,7 +12,7 @@ const run = async withShield => {
   const args = withShield ? [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`] : [];
   const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'shield-d3-')), { headless: false, channel: 'chromium', args });
   if (withShield) {
-    const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
+    const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 120000 }).catch(async e => { const p = await ctx.newPage(); await p.goto('chrome://extensions-internals').catch(() => { }); console.log((await p.textContent('body').catch(() => '')).slice(0, 4000)); throw e; });
     await new Promise(r => setTimeout(r, 5000));   // let the background switch every list on
     console.log('enabled:', (await sw.evaluate(() => chrome.declarativeNetRequest.getEnabledRulesets())).join(', '));
   }

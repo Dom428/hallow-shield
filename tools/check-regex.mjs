@@ -18,7 +18,7 @@ for (const id of sets) for (const r of JSON.parse(fs.readFileSync(path.join(RULE
 const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'shield-re-')), {
   headless: true, channel: 'chromium', args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
 });
-const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
+const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 120000 }).catch(async e => { const p = await ctx.newPage(); await p.goto('chrome://extensions-internals').catch(() => { }); console.log((await p.textContent('body').catch(() => '')).slice(0, 4000)); throw e; });
 const answers = await sw.evaluate(async list => {
   const out = [];
   for (const r of list) out.push(await chrome.declarativeNetRequest.isRegexSupported({ regex: r.regex, isCaseSensitive: r.cs }));

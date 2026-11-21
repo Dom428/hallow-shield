@@ -334,6 +334,12 @@ export const SCRIPTLET_ALIASES = {
   'remove-cookie': 'remove-cookie', 'cookie-remover': 'remove-cookie',
   norafif: 'prevent-requestAnimationFrame', 'no-requestAnimationFrame-if': 'prevent-requestAnimationFrame', 'prevent-requestAnimationFrame': 'prevent-requestAnimationFrame',
   'noeval-if': 'noeval-if', 'prevent-eval-if': 'noeval-if', noeval: 'noeval-if', 'silent-noeval': 'noeval-if',
+  rpnt: 'trusted-replace-node-text', 'replace-node-text': 'trusted-replace-node-text', 'trusted-rpnt': 'trusted-replace-node-text', 'trusted-replace-node-text': 'trusted-replace-node-text',
+  nowebrtc: 'nowebrtc', nofab: 'prevent-fab', 'prevent-fab': 'prevent-fab', 'fuckadblock.js-3.2.0': 'prevent-fab',
+  'set-attr': 'set-attr', 'trusted-set-attr': 'trusted-set-attr', 'trusted-set-cookie': 'trusted-set-cookie',
+  'trusted-set-local-storage-item': 'trusted-set-local-storage-item', 'trusted-set-session-storage-item': 'trusted-set-session-storage-item',
+  'trusted-prevent-fetch': 'prevent-fetch', 'trusted-prevent-xhr': 'prevent-xhr',
+  'window-close-if': 'window-close-if', 'close-window': 'window-close-if', 'alert-buster': 'alert-buster',
 };
 
 // scriptlet arguments: comma separated, "\," is a literal comma, an argument may be quoted

@@ -33,7 +33,7 @@ const PLAYER = { videoDetails: { videoId: 'abc', title: 'Test video' }, streamin
 const YT = `<!doctype html><html><head><title>video</title></head><body><div id="player">loading</div>
   <script>var ytInitialPlayerResponse = ${JSON.stringify(PLAYER)};</script>
   <script>
-    window.result = {};
+    var result = {};
     result.initialAds = !!(ytInitialPlayerResponse.adPlacements || ytInitialPlayerResponse.playerAds || ytInitialPlayerResponse.adSlots);
     result.initialVideo = ytInitialPlayerResponse.videoDetails && ytInitialPlayerResponse.videoDetails.videoId;
     fetch('/youtubei/v1/player?prettyPrint=false', { method: 'POST', body: '{"videoId":"abc"}' }).then(r => r.json()).then(j => {
@@ -56,7 +56,7 @@ const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.t
   headless: true, channel: 'chromium',
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, `--proxy-server=http://127.0.0.1:${server.address().port}`, '--proxy-bypass-list=<-loopback>'],
 });
-const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
+const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 120000 }).catch(async e => { const p = await ctx.newPage(); await p.goto('chrome://extensions-internals').catch(() => { }); console.log((await p.textContent('body').catch(() => '')).slice(0, 4000)); throw e; });
 const until = async (f, ms) => { const t0 = Date.now(); for (;;) { if (await f()) return true; if (Date.now() - t0 > ms) return false; await new Promise(r => setTimeout(r, 200)); } };
 const LISTS = Object.keys(L);
 // the background switches on the lists the manifest leaves off (shared pool), or loads them as dynamic rules

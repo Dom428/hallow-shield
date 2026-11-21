@@ -66,7 +66,8 @@ const NEWS = `
     setTimeout(function other() { result.other = 'ran'; }, 10);
     fetch('/ads/config.json').then(r => r.text()).then(t => { result.fetched = t; }).catch(e => { result.fetched = 'error'; });
     setTimeout(() => { const d = document.createElement('div'); d.className = 'later'; d.id = 'later'; d.textContent = 'Late ad here'; document.body.appendChild(d); }, 500);
-  </script>`;
+  </script>
+  <script>result.rm = 'removeMe ran';</script>`;
 // a fake YouTube watch page: initial player data with ad fields, then the player API over fetch and XHR
 const PLAYER = { videoDetails: { videoId: 'abc', title: 'Test video' }, streamingData: { formats: [{ itag: 18 }] }, adPlacements: [{ adPlacementRenderer: {} }], playerAds: [{ playerLegacyDesktopWatchAdsRenderer: {} }], adSlots: [{ adSlotRenderer: {} }] };
 const YT = `
@@ -225,6 +226,7 @@ await step('scriptlets: set-constant, abort-on-property-read, prevent-setTimeout
   assert.equal(r.timer, undefined, 'prevent-setTimeout'); assert.equal(r.other, 'ran', 'other timers run');
   assert.equal(r.fetched, '', 'prevent-fetch answered without the network'); assert.ok(!got('news.test/ads/config.json'));
   assert.equal(await n.evaluate(() => document.getElementById('clicky').hasAttribute('onclick')), false, 'remove-attr');
+  assert.equal(r.rm, undefined, 'remove-node-text emptied the inline script');
   await n.close();
   const s = await visit('sub.news.test', '/page', 800);
   const rs = await result(s);
@@ -251,6 +253,15 @@ await step('fake YouTube page: no ad fields in the initial data, the player API 
   await yp.close();
   await set({ paused: [] });
   await until(async () => (await scripts()).every(c => !(c.excludeMatches || []).includes('*://*.youtube.test/*')), 5000, 'resumed');
+});
+
+await step('a filter for google.* (entity) runs on google.test and nowhere else', async () => {
+  const g = await visit('google.test');
+  assert.equal(await g.evaluate(() => window.entityTest), true);
+  await g.close();
+  const o = await visit('other.test');
+  assert.equal(await o.evaluate(() => window.entityTest), undefined);
+  await o.close();
 });
 
 await step('a $document exception lets a whole site load everything', async () => {

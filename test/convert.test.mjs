@@ -155,7 +155,7 @@ test('cosmetic: generic, per site, exceptions, entities, specific-generic, :styl
   assert.equal(p.kind, 'procedural'); assert.deepEqual(p.prog, { s: '.a', t: [['text', 'Ad']] });
   const s = cosmeticRule('news.test##+js(set, adsConfig.enabled, false)');
   assert.deepEqual([s.kind, s.canonical, s.args], ['scriptlet', 'set-constant', ['adsConfig.enabled', 'false']]);
-  assert.equal(cosmeticRule('example.org##+js(nowebrtc)').canonical, null);
+  assert.equal(cosmeticRule('example.org##+js(nowebrtc)').canonical, 'nowebrtc'); assert.equal(cosmeticRule('example.org##+js(not-a-scriptlet)').canonical, null);
   assert.equal(cosmeticRule('sub.news.test#@#+js()').exception, true);
 });
 test('procedural selectors compile into small programs', () => {
@@ -194,7 +194,7 @@ test('a whole list: ids, exceptions first, every rule valid, budget respected', 
   assert.deepEqual([...cosmetic.generic].sort(), ['.ad-banner', 'div[id^="sponsor-"]']);
   assert.ok(cosmetic.hide.some(c => c.selector === '.sponsored' && c.inc[0] === 'news.test'));
   assert.ok(cosmetic.hide.some(c => c.selector === '.ad-banner' && c.exception));
-  assert.ok(stats.skipped['domain wildcard'] && stats.skipped['scriptlet nowebrtc']);
+  assert.ok(stats.skipped['domain wildcard']);
   const capped = convertList(read('./sample-ads.txt'), { maxRules: 3 });
   assert.equal(capped.rules.length, 3);
   assert.ok(capped.rules.slice(0, 2).every(r => r.action.type !== 'block'), 'exceptions are never the ones dropped');
