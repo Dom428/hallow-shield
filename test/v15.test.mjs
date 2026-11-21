@@ -331,9 +331,9 @@ test('generic hiding by class / id: the token a selector needs, or none (those s
     '[id^="ad-"]': null, 'a[href*="ads."]': null, '.a, .b': null, 'div': null, ':root .x': null, '.-x': '.-x' };
   for (const [sel, key] of Object.entries(cases)) assert.equal(genericKey(sel), key, sel);
 });
-test('the version is 1.5 everywhere', async () => {
+test('the manifest and package.json agree on the version (1.5 or newer)', async () => {
   const fs = await import('node:fs');
   const mf = JSON.parse(fs.readFileSync(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(mf.version, '1.5'); assert.equal(pkg.version, '1.5.0');
+  assert.equal(pkg.version, mf.version + '.0'); assert.ok(Number(mf.version.split('.')[1]) >= 5);
 });

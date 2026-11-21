@@ -167,6 +167,6 @@ test('the version is the same everywhere, and the zips get a version.json', () =
   const mf = JSON.parse(read('../extension/manifest.json')), pkg = JSON.parse(read('../package.json'));
   assert.equal(pkg.version, mf.version + '.0');
   assert.ok(mf.permissions.includes('alarms')); assert.ok(!mf.permissions.includes('declarativeNetRequestFeedback'), 'feedback access stays optional');
-  assert.deepEqual(mf.optional_permissions, ['declarativeNetRequestFeedback']);
+  assert.deepEqual(mf.optional_permissions, ['declarativeNetRequestFeedback', 'nativeMessaging']);   // 1.6: + the Hallow family bridge
   assert.match(read('../tools/package.mjs'), /version\.json/);
 });

@@ -4,3 +4,6 @@ dist/
 extension/rules/
 extension/_metadata/
 .lists/
+# the bridge is built by bridge/build.ps1 (CI builds the one in the release zips)
+bridge/*.exe
+bridge/out/

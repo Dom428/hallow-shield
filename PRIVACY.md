@@ -36,13 +36,22 @@
   page (Chrome calls it "Read your browsing history"): with it the browser tells Shield which of its rules matched on
   which tab, not the addresses. Development builds use the browser's debug event, which includes the address, to
   count the blocked host.
+- **Share counts with Hallow apps on this PC** (1.6, options page > Stats, **off by default**): only when you turn it
+  on (and allow the browser's optional "nativeMessaging" access), Shield hands the Hallow family bridge - a small
+  program on your PC (`HallowShieldBridge.exe`), started by the browser - these values about once a minute and when
+  the popup opens: blocked today, blocked in the last 7 days, cookie banners answered today (all three empty if blocked
+  counts are off), your blocking level, Shield's version, the browser's name, a random id Shield makes for this browser
+  profile and today's date. **Never an address, a site, a host or history.** The bridge writes them to
+  `%APPDATA%\HallowShield\status.json` on your PC, for Hallow Hub and Hallow Remote to show, and keeps nothing else
+  (it throws away any other field). Nothing is sent over the internet. Turning it off stops the sending and gives the
+  access back; the file stays until you delete it (Hub / Remote see its time is old).
 - **Try fixing this site** (after **Report a broken site** in the popup) only changes Shield's own setting for that
   site, step by step (Normal, No hiding, Blocking only, Off), reloads the tab and asks you whether it works. The step
   it's on is kept in Shield's storage while you look; the setting you say yes to stays (like Strict or Off). Nothing is
   sent anywhere.
 - **The popup's "N cookie banners answered here"** comes from the stats above (the clicks are counted per site since
   1.5), for the last 30 days.
-- **What is stored, on your PC only** (browser extension storage): your blocking level, which lists you switched off,
+- **What is stored, on your PC only** (browser extension storage): whether sharing with the Hallow apps is on (with the random profile id and when it last reached the bridge), your blocking level, which lists you switched off,
   the cookie-banner and annoyance switches, the sites you set to Strict, Off (paused), No hiding or Blocking only, the
   step "Try fixing this site" is on, My filters (including what you hid with the zapper) and the stats above (with
   cookie banners answered per site).

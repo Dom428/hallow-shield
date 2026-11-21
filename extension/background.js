@@ -15,6 +15,7 @@
 import { cosmeticKeys, shardOf, onList, siteCosmetics, pauseRule, PAUSE_BASE, USER_BASE, USER_MAX, USER_REGEX_MAX, STRICT_BASE, STRICT_MAX, patternsFor, wantedRulesets, groupOn, siteOf, siteModeOf, withSiteMode, strictRule, validDomain, badgeColor, MODE_KEYS, LEVELS, DEFAULT_LEVEL } from './shared.js';
 import { compileUserFilters, zapLine } from './userfilters.js';
 import { emptyStats, addBlock, addClick, prune, summary, categoryOf, domainOfRule, hostOf, clicksOn } from './stats.js';
+import { familyReport, browserName, newProfileId, FAMILY_HOST } from './family.js';
 
 const ext = globalThis.browser ?? chrome;
 const dnr = ext.declarativeNetRequest;
@@ -239,7 +240,7 @@ ext.runtime.onStartup?.addListener(() => { syncAll(); startStats(); });
 ext.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   const k = Object.keys(changes);
-  if (k.every(x => ['fallback', 'fallbackNotBlock', 'scriptErrors', 'userRefused', 'userNotBlock', 'userSynced', 'stats', 'strictNotBlock', 'strictRules', 'strictError', 'fixFlow'].includes(x))) return;
+  if (k.every(x => ['fallback', 'fallbackNotBlock', 'scriptErrors', 'userRefused', 'userNotBlock', 'userSynced', 'stats', 'strictNotBlock', 'strictRules', 'strictError', 'fixFlow', 'family', 'familyProfile', 'familyLast'].includes(x))) return;
   cosmeticCache.clear();
   if (k.some(x => Object.values(MODE_KEYS).includes(x))) serial(() => Promise.all([syncPauses(), syncScripts(), syncStrict()]));
   if (k.some(x => ['level', ...Object.values(MODE_KEYS)].includes(x))) badgeAll().catch(() => { });
@@ -323,6 +324,8 @@ ext.runtime.onMessage.addListener((msg, sender, reply) => {
   // Shield's own pages (the options page), not web pages: stats
   if ((sender.url || '').startsWith(url(''))) {
     if (msg?.t === 'stats-get') { (async () => { await collectMatched(true); reply(await statsView()); })().catch(e => reply({ error: String(e) })); return true; }
+    // 1.6: the Hallow family bridge - send the counts now (the popup when it opens, the options switch)
+    if (msg?.t === 'family-send') { sendFamily(msg.fresh !== false).then(r => reply(r), e => reply({ ok: false, error: String(e) })); return true; }
     if (msg?.t === 'stats-clear') { (async () => { await statsClear(); reply(await statsView()); })().catch(e => reply({ error: String(e) })); return true; }
     // the popup: cookie banners answered on this site (last 30 days)
     if (msg?.t === 'site-clicks') { (async () => { await statsLoad(); reply({ n: clicksOn(statsMem, String(msg.site || '')) }); })().catch(() => reply({ n: 0 })); return true; }
@@ -424,7 +427,37 @@ async function statsView() {
   return { ...summary(prune(statsMem)), feedback, source: feedback ? (dev && dnr.onRuleMatchedDebug ? 'debug' : 'matched') : 'clicks-only' };
 }
 function startStats() { try { ext.alarms?.create(STATS_ALARM, { periodInMinutes: 1 }); } catch { } }
-ext.alarms?.onAlarm.addListener(a => { if (a.name === STATS_ALARM) collectMatched(false); });
+ext.alarms?.onAlarm.addListener(a => { if (a.name === STATS_ALARM) collectMatched(false).finally(() => sendFamily(false)); });
+
+// ---- 1.6: the Hallow family bridge (family.js): with "Share counts with Hallow apps on this PC" on (the optional
+// "nativeMessaging" access + family: true), the counts go to the native host com.hallow.shield (HallowShieldBridge.exe)
+// about once a minute (with the stats alarm) and when the popup opens. Only counts, the level, the version, the browser's
+// name and a random profile id - never a URL, a site or history. Off: nothing is sent and the host isn't started.
+const hasNative = () => ext.permissions.contains({ permissions: ['nativeMessaging'] }).catch(() => false);
+function thisBrowser() {
+  const n = globalThis.navigator || {};
+  return browserName({ brands: n.userAgentData?.brands || [], ua: n.userAgent || '', brave: !!n.brave, firefox: url('').startsWith('moz-extension:') });
+}
+let familyBusy = null;
+function sendFamily(fresh) {
+  if (familyBusy) return familyBusy;
+  familyBusy = (async () => {
+    const { family } = await ext.storage.local.get({ family: false });
+    if (family !== true || !(await hasNative()) || !ext.runtime.sendNativeMessage) return { ok: false, off: true };
+    if (fresh) await collectMatched(true).catch(() => { });
+    let { familyProfile } = await ext.storage.local.get({ familyProfile: '' });
+    if (!familyProfile) { familyProfile = newProfileId(); await ext.storage.local.set({ familyProfile }); }
+    const s = await settings(), counted = await hasFeedback();
+    await statsLoad();
+    const msg = familyReport({ stats: statsMem, counted, level: s.level, version: ext.runtime.getManifest().version, browser: thisBrowser(), profile: familyProfile });
+    let r;
+    try { r = await ext.runtime.sendNativeMessage(FAMILY_HOST, msg); r = r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'no answer' }; }
+    catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+    await ext.storage.local.set({ familyLast: { t: Date.now(), ...r } });
+    return r;
+  })().finally(() => { familyBusy = null; });
+  return familyBusy;
+}
 
 // the site of a tab at a given time (tabs remember their last few addresses)
 const tabSites = new Map();

@@ -64,6 +64,8 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
 - **Blocking: Basic / Optimal / Complete,** like uBO Lite. *Basic* blocks requests only and runs nothing in pages.
   *Optimal* (the default) adds ad-box hiding and the page fixes on the sites Shield may access. *Complete* adds strict
   blocking of pop-up and pop-under ad sites.
+- **Share counts with Hallow apps on this PC** (new in 1.6, options page > Stats, off by default): Hallow Hub and
+  Hallow Remote can show how much Shield blocked today and this week. See [Hallow family](#hallow-family) below.
 - **Try fixing this site** (new in 1.5, offered after **Report a broken site**): Shield steps the site through
   *Normal*, *No hiding* (blocking and page fixes only), *Blocking only* and *Off*, reloading the tab each time and asking
   "Is it working now?". The mildest step that works stays as that site's own setting (listed under **Sites**, with
@@ -77,9 +79,9 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
 ## Install
 
 Download the zip for your browser from the [latest release](https://github.com/Dom428/hallow-shield/releases/latest)
-(`hallow-shield-chrome-1.5.zip` or `hallow-shield-firefox-1.5.zip`) and unzip it into a folder of its own - or let
-[Hallow Setup](https://github.com/Dom428/hallow-setup) 1.6 do it (it checks GitHub's checksum and keeps the folder up to
-date). Each zip has a `version.json` with its version and build date.
+(`hallow-shield-chrome-1.6.zip` or `hallow-shield-firefox-1.6.zip`) and unzip it into a folder of its own - or let
+[Hallow Setup](https://github.com/Dom428/hallow-setup) 1.6+ do it (it checks GitHub's checksum and keeps the folder up to
+date; 1.8+ also registers the Hallow family bridge). Each zip has a `version.json` with its version and build date.
 
 - **Chrome, Edge, Brave, Opera:** open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode**,
   click **Load unpacked** and pick that folder. Keep the folder - the browser loads Shield from it. To update, unzip
@@ -87,6 +89,57 @@ date). Each zip has a `version.json` with its version and build date.
 - **Firefox (128 or newer):** open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, pick
   `manifest.json` in the unzipped folder (temporary until the add-on is signed on addons.mozilla.org). Firefox asks
   you to allow access to all sites - Shield needs it to hide ad boxes and fix YouTube; the popup has a button for it.
+
+> **Updating from 1.5 or older to 1.6: remove the old card and load Shield again.** Shield 1.6 has a fixed extension
+> ID (a `key` in `manifest.json`, like Hallow Keys) so the Hallow family bridge can trust it. Before 1.6 the browser
+> made the ID up from the folder's path, so for the browser 1.6 is a **new extension**: its settings, site modes and
+> stats start fresh, and the old card stays until you remove it. Export **My filters** first (options page > My
+> filters > Export), then unzip 1.6 over the folder, remove the old Shield card, click **Load unpacked** (or the reload
+> arrow - if two cards show, remove the old one) and import My filters again. Firefox keeps its add-on id, so nothing
+> changes there. From 1.6 on, updates keep everything again.
+
+## Hallow family
+
+Shield can show up in the other Hallow apps: with **Share counts with Hallow apps on this PC** on (options page >
+Stats; **off by default**, and the browser asks for the "communicate with cooperating native applications" access
+first), Shield hands a few numbers to the **Hallow family bridge**, `HallowShieldBridge.exe` - a tiny program on your
+PC that the browser starts (native messaging host `com.hallow.shield`) - about once a minute and when you open the
+popup. Hallow Hub and Hallow Remote read what it writes.
+
+- **What is sent:** `{ blockedToday, blockedWeek, bannersToday, level, version, browser, profile, day }` - blocked
+  today, blocked in the last 7 days, cookie banners answered today, the blocking level, Shield's version, the browser's
+  name, a random id Shield makes once in each browser profile (so two profiles don't overwrite each other) and the
+  PC's local date of the counts. **Never a URL, a site, a host or history.** With blocked counts off (the Stats page's
+  optional permission), the three counts are `null`. The bridge also keeps only these fields: anything else in a
+  message is thrown away. Nothing leaves your PC.
+- **Getting the bridge:** both zips carry it in `bridge\` (with `install-bridge.ps1`).
+  [Hallow Setup](https://github.com/Dom428/hallow-setup) 1.8+ registers it when it installs or updates Shield. By hand:
+  `powershell -ExecutionPolicy Bypass -File bridge\install-bridge.ps1` in Shield's folder (`-Uninstall` to remove,
+  `-Status` to check). It copies the exe to `%LOCALAPPDATA%\Hallow Shield\bridge` and registers it for your Windows
+  user only (HKCU, no admin) for Chrome, Edge, Brave (Opera reads Chrome's entry) and Firefox. Chromium browsers only
+  let Shield's fixed ID `afghaliocnljjjegfnaonfghpjgpebni` start it, Firefox only `hallow-shield@dom428.github.io`.
+- **`%APPDATA%\HallowShield\status.json`** - the only file the bridge writes, replaced atomically (a temp file
+  swapped in, so a reader never sees half of it), one entry per browser and profile:
+
+  ```json
+  {"version":"1.6","updated":"2026-11-21T15:04:05Z",
+   "browsers":[{"name":"Chrome","profile":"Default","version":"1.6","level":"optimal","blockedToday":123,
+                "blockedWeek":4567,"bannersToday":3,"updated":"2026-11-21T15:04:05Z","day":"2026-11-21","id":"3f9a0c1d2b4e5f60"}],
+   "blockedToday":123,"blockedWeek":4567,"bannersToday":3}
+  ```
+
+  - `version`: the bridge's version; `updated`: when the file was last written (UTC, ISO 8601).
+  - `browsers[]`: `name` (Chrome, Edge, Brave, Opera, Vivaldi, Chromium or Firefox), `profile` (`Default` for the
+    first profile seen in that browser, then `Profile 2`, ...), Shield's `version` and `level` (`basic`,
+    `optimal` or `complete`), the three counts (numbers, or `null` when that profile's blocked counts are off), when
+    that browser last reported (`updated`), the browser's local date of the counts (`day`) and the random profile
+    `id`. Read the fields you need and ignore the rest - more may come.
+  - Top-level `blockedToday` / `bannersToday`: the sums over entries reported **today**; `blockedWeek`: the sum
+    over entries heard from in the **last 2 days**. Older entries stay listed but aren't counted (a browser you closed
+    yesterday still shows, with its `updated` time); entries not heard from for 30 days are dropped. A sum is `null`
+    when no counted entry has a number.
+  - No file: sharing was never turned on (or the bridge isn't registered). Old `updated`: no browser with Shield and
+    sharing on has run lately.
 
 ## Honest limits (compared with Brave Shields and uBlock Origin)
 
@@ -136,11 +189,19 @@ date). Each zip has a `version.json` with its version and build date.
 - **Pop-ups:** the browser can't tell a pop-up from any other new tab, so `$popup` filters only become rules for whole
   ad hosts opened from another site, and only at *Complete*.
 - **Firefox:** the Firefox package is built and linted in CI, but the end-to-end tests run in Chromium only.
+- **The Hallow family bridge is Windows only** (the Hallow apps are), and the counts are as fresh as the stats: the
+  browser gives Shield its matched rules about once a minute, so Hub and Remote can be a minute behind.
 
 ## Building
 
 - `npm install`, then `npm run rules` (downloads the newest lists and converts them), `npm run regex` (Chromium checks
   every regex rule), `npm run package` (zips into `dist/`).
+- The bridge: `bridge\build.ps1 -Test` (Windows, the .NET Framework C# compiler that ships with Windows) builds
+  `bridge\HallowShieldBridge.exe` and runs its unit tests (message framing, merging browsers and profiles, the atomic
+  write, stale entries, registering under a test registry key); `npm run e2e:bridge` runs the real extension in
+  Chromium with the switch turned on and checks that a message reaches the host and that what is sent / written has
+  the counts and no URLs (on Windows with the real bridge, elsewhere with `test/bridge-standin.mjs`). CI builds the
+  bridge on Windows and packs it into both zips.
 - Tests: `npm test` (converter, scriptlets, the picker's selectors, My filters, the cookie-banner clicker, stats,
   per-site modes and Strict rules), `npm run rules:sample && npm run e2e`
   (the real extension in Chromium against local test pages: blocking, redirects, `$removeparam`, `$csp`, procedural

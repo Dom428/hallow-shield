@@ -199,4 +199,30 @@ $('statsGrant').onclick = async () => {
   $('statsStatus').textContent = ok ? 'Blocked counts are on: from now on Shield counts what the browser blocks.' : 'Not turned on.';
   if (ok) loadStats();
 };
+// ---- 1.6: Hallow family (share counts with Hallow apps on this PC) ----
+async function renderFamily(sent) {
+  const { family, familyLast } = await ext.storage.local.get({ family: false, familyLast: null });
+  const native = await ext.permissions.contains({ permissions: ['nativeMessaging'] }).catch(() => false);
+  const on = family === true && native, last = sent || familyLast;
+  $('familyShare').checked = on;
+  $('familyStatus').textContent = !on ? 'Off: nothing is shared.'
+    : last && last.ok ? 'On: the counts reach the Hallow family bridge' + (last.t ? ' (last at ' + new Date(last.t).toLocaleTimeString() + ')' : '') + '.'
+    : last && last.error ? 'On, but the Hallow family bridge didn\'t answer (' + last.error + '). Install or update Shield with Hallow Setup, or run bridge\\install-bridge.ps1 from Shield\'s folder - then reopen this page.'
+    : 'On.';
+}
+$('familyShare').onchange = async e => {
+  if (e.target.checked) {
+    let ok = false;
+    try { ok = await ext.permissions.request({ permissions: ['nativeMessaging'] }); } catch { }
+    if (!ok) { e.target.checked = false; $('familyStatus').textContent = 'Not turned on (the browser didn\'t give the access).'; return; }
+    await ext.storage.local.set({ family: true });
+    $('familyStatus').textContent = 'Sending...';
+    renderFamily(await ext.runtime.sendMessage({ t: 'family-send' }).catch(() => null));
+  } else {
+    await ext.storage.local.set({ family: false, familyLast: null });
+    try { await ext.permissions.remove({ permissions: ['nativeMessaging'] }); } catch { }
+    renderFamily();
+  }
+};
+renderFamily();
 showTab();

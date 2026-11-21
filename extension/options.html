@@ -86,6 +86,17 @@
       </div>
       <div class="bar"><button id="statsRefresh">Refresh</button><span class="spacer"></span><button id="statsClear">Clear stats</button></div>
       <p id="statsStatus" class="small" role="status"></p>
+      <div class="family">
+        <h2>Hallow family</h2>
+        <label class="switch"><input type="checkbox" id="familyShare"><span class="knob"></span><span><b>Share counts with Hallow apps on this PC</b><br>
+          <span class="muted small">Lets Hallow Hub and Hallow Remote show how much Shield blocked. About once a minute Shield
+          hands the Hallow family bridge (a small program from Hallow Setup, on this PC) only these numbers: blocked today,
+          blocked in the last 7 days, cookie banners answered today, your blocking level, Shield's version and this
+          browser's name. Never an address, a site or your history - and nothing leaves your PC. The bridge keeps them in
+          <code>%APPDATA%\HallowShield\status.json</code>. Off by default; the browser asks to let Shield
+          "communicate with cooperating native applications".</span></span></label>
+        <p id="familyStatus" class="small" role="status"></p>
+      </div>
       <details class="limits"><summary>Honest limits</summary>
         <ul class="muted small">
           <li>The browser decides what an extension may know. Blocked counts come from the browser's list of the rules it

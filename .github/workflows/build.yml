@@ -5,6 +5,9 @@
 # check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, measures what
 # Shield costs a heavy page (load time and content-script time, with the real rules; fails over budget), packs the
 # zips, and lints the Firefox package.
+# 1.6: a Windows job builds the Hallow family bridge (bridge/HallowShieldBridge.exe, .NET Framework csc), runs its unit
+# tests and the bridge end-to-end test with the real exe; the Linux job runs the same e2e against a stand-in host and
+# packs the Windows-built exe into both zips.
 name: Build
 
 on:
@@ -18,7 +21,27 @@ permissions:
   contents: read
 
 jobs:
+  bridge:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the bridge and run its unit tests (framing, merging, atomic write, stale entries, register)
+        shell: powershell
+        run: .\bridge\build.ps1 -Test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install chromium
+      - name: Bridge end-to-end (the switch, a native message to the real exe, status.json with counts and no URLs)
+        run: npm run rules:sample && npm run e2e:bridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-exe
+          path: bridge/HallowShieldBridge.exe
+          retention-days: 30
   build:
+    needs: bridge
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +54,8 @@ jobs:
         run: npm test
       - name: The extension in Chromium (sample lists)
         run: npm run rules:sample && npm run e2e
+      - name: The Hallow family bridge in Chromium (stand-in host)
+        run: npm run e2e:bridge
       - name: Rules from the newest lists
         run: npm run rules
       - name: Chromium checks every regex rule
@@ -41,11 +66,20 @@ jobs:
         run: npm run smoke
       - name: Performance budget (heavy page with and without Shield, real rules)
         run: npm run perf
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridge-exe
+          path: bridge
       - name: Pack for Chrome / Edge / Brave / Opera and Firefox
         run: npm run package
       - name: Each zip carries version.json
         run: |
           for z in dist/hallow-shield-*.zip; do unzip -p "$z" version.json | tee /dev/stderr | node -e "const v=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=require('./extension/manifest.json'); if (v.version!==m.version||v.dev!==false||!v.built) process.exit(1)"; done
+      - name: Each zip carries the bridge and its install script
+        run: |
+          for z in dist/hallow-shield-*.zip; do unzip -l "$z" | grep -q 'bridge/HallowShieldBridge.exe' && unzip -l "$z" | grep -q 'bridge/install-bridge.ps1' || exit 1; done
+          unzip -p dist/hallow-shield-chrome-*.zip manifest.json | node -e "const m=JSON.parse(require('fs').readFileSync(0,'utf8')); if(!m.key) process.exit(1)"
+          unzip -p dist/hallow-shield-firefox-*.zip manifest.json | node -e "const m=JSON.parse(require('fs').readFileSync(0,'utf8')); if(m.key) process.exit(1)"
       - name: Lint the Firefox package (addons-linter)
         continue-on-error: true
         run: |

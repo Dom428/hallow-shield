@@ -130,6 +130,9 @@ try {
   $('countText').textContent = blocked === 1 ? 'ad or tracker blocked on this page' : 'ads and trackers blocked on this page';
 } catch { $('count').textContent = '-'; }
 
+// 1.6: the Hallow family bridge - the counts go out when the popup opens (only if sharing is on)
+ext.runtime.sendMessage({ t: 'family-send' }).catch(() => { });
+
 // 1.5: cookie banners Shield answered on this site (last 30 days, from the stats kept on this PC)
 if (site && validDomain(site)) {
   ext.runtime.sendMessage({ t: 'site-clicks', site }).then(r => {
