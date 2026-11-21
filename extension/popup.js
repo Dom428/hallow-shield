@@ -1,6 +1,6 @@
 // Hallow Shield popup: this site (Strict / Normal / Off - Off is the same as Pause) and what was blocked on it, the blocking level, the cookie-banner and
 // annoyance switches, the element zapper and My filters, the lists (Advanced), and "Report a broken site" (copies the details to your clipboard - Shield sends nothing anywhere).
-import { siteOf, validDomain, siteModeOf, withSiteMode, LEVELS, DEFAULT_LEVEL, PAUSE_BASE, USER_BASE, STRICT_BASE } from './shared.js';
+import { siteOf, validDomain, siteModeOf, withSiteMode, LEVELS, DEFAULT_LEVEL, PAUSE_BASE, USER_BASE, STRICT_BASE, MODE_KEYS, FIX_STEPS, MODE_LABEL } from './shared.js';
 const ext = globalThis.browser ?? chrome;
 const $ = id => document.getElementById(id);
 
@@ -8,7 +8,7 @@ const $ = id => document.getElementById(id);
 const forTab = Number(new URLSearchParams(location.search).get('tab'));
 const tab = forTab ? await ext.tabs.get(forTab) : (await ext.tabs.query({ active: true, currentWindow: true }))[0];
 const site = tab && siteOf(tab.url);
-const s = await ext.storage.local.get({ paused: [], strict: [], strictNotBlock: [], level: DEFAULT_LEVEL, lists: {}, cookies: true, annoyances: false, myFilters: '', fallback: {}, fallbackNotBlock: [], userNotBlock: [] });
+const s = await ext.storage.local.get({ paused: [], strict: [], noHide: [], blockOnly: [], strictNotBlock: [], level: DEFAULT_LEVEL, lists: {}, cookies: true, annoyances: false, myFilters: '', fallback: {}, fallbackNotBlock: [], userNotBlock: [] });
 if (!LEVELS.includes(s.level)) s.level = DEFAULT_LEVEL;
 const meta = await (await fetch(ext.runtime.getURL('rules/meta.json'))).json();
 const version = ext.runtime.getManifest().version;
@@ -19,6 +19,8 @@ const mode = () => siteModeOf(s, site);
 const MODE_NOTE = {
   strict: site => 'Strict on ' + site + ': Complete blocking plus annoyances, on this site only.',
   off: site => 'Shield is off on ' + site + ' (the same as Pause): ads and trackers are allowed here.',
+  nohide: site => 'No hiding on ' + site + ': ads and trackers are blocked and page fixes run, but nothing is hidden. Normal goes back to your settings.',
+  blockonly: site => 'Blocking only on ' + site + ': ads and trackers are blocked, nothing runs in its pages. Normal goes back to your settings.',
   normal: () => '',
 };
 function showMode() {
@@ -30,7 +32,7 @@ for (const b of document.querySelectorAll('#mode button')) b.onclick = async () 
   if (b.dataset.mode === mode()) return;
   // a site that's on because of a parent domain's setting (sub.example.com under example.com) gets its own entry
   const next = withSiteMode(s, site, b.dataset.mode);
-  if (b.dataset.mode === 'normal') { next.paused = next.paused.filter(d => !(site === d || site.endsWith('.' + d))); next.strict = next.strict.filter(d => !(site === d || site.endsWith('.' + d))); }
+  if (b.dataset.mode === 'normal') for (const k of Object.values(MODE_KEYS)) next[k] = next[k].filter(d => !(site === d || site.endsWith('.' + d)));
   Object.assign(s, next);
   await ext.storage.local.set(next);
   showMode();
@@ -128,6 +130,62 @@ try {
   $('countText').textContent = blocked === 1 ? 'ad or tracker blocked on this page' : 'ads and trackers blocked on this page';
 } catch { $('count').textContent = '-'; }
 
+// 1.5: cookie banners Shield answered on this site (last 30 days, from the stats kept on this PC)
+if (site && validDomain(site)) {
+  ext.runtime.sendMessage({ t: 'site-clicks', site }).then(r => {
+    const n = r && r.n || 0;
+    if (n > 0) { $('clicksHere').textContent = n === 1 ? '1 cookie banner answered here' : n + ' cookie banners answered here'; $('clicksHere').hidden = false; }
+  }).catch(() => { });
+}
+
+// 1.5: "Try fixing this site" - steps the site through Normal, no hiding, blocking only and Off, reloading the tab each
+// time and asking "Is it working now?"; the mildest step that works stays as the site's own setting. All local: the
+// step is kept in storage while you look at the page (the popup closes when you click the page).
+const FIX_TEXT = {
+  normal: 'Step 1 of 4 - Normal: Shield with your settings. The page was reloaded.',
+  nohide: 'Step 2 of 4 - No hiding: ads and trackers are still blocked and page fixes run, but nothing is hidden. The page was reloaded.',
+  blockonly: 'Step 3 of 4 - Blocking only: no hiding and no page fixes. The page was reloaded.',
+  off: 'Step 4 of 4 - Off: Shield is off on this site. The page was reloaded.',
+};
+let flow = (await ext.storage.local.get({ fixFlow: null })).fixFlow;
+if (flow && flow.site !== site) flow = null;
+async function fixApply(m) {
+  const r = await ext.runtime.sendMessage({ t: 'site-mode', site, mode: m, tabId: tab.id });
+  Object.assign(s, await ext.storage.local.get(Object.fromEntries(Object.values(MODE_KEYS).map(k => [k, []]))));
+  showMode();
+  return r && r.ok;
+}
+async function saveFlow(f) { flow = f; if (f) await ext.storage.local.set({ fixFlow: f }); else await ext.storage.local.remove('fixFlow'); showFix(); }
+function showFix() {
+  $('fixPanel').hidden = !flow;
+  if (flow) $('fixStep').textContent = FIX_TEXT[FIX_STEPS[flow.step]];
+  $('fix').hidden = !!flow || !site || !validDomain(site) || !window.shieldReport;
+}
+$('fix').onclick = async () => {
+  $('fixNote').textContent = '';
+  await saveFlow({ site, tabId: tab.id, orig: mode(), step: 0 });
+  await fixApply(FIX_STEPS[0]);
+};
+$('fixYes').onclick = async () => {
+  const m = FIX_STEPS[flow.step];
+  await saveFlow(null);
+  $('fixNote').textContent = m === 'normal' ? 'Good - ' + site + ' stays on Normal.' : 'Saved: ' + site + ' now uses ' + MODE_LABEL[m] + '. Change it any time with "This site" above, or under Sites on the options page.';
+};
+$('fixNo').onclick = async () => {
+  if (flow.step < FIX_STEPS.length - 1) { await saveFlow({ ...flow, step: flow.step + 1 }); await fixApply(FIX_STEPS[flow.step]); return; }
+  const orig = flow.orig;
+  await saveFlow(null);
+  await fixApply(orig);
+  $('fixNote').textContent = 'Still broken with Shield off, so Shield isn\'t what breaks it. Your setting for ' + site + ' was put back.';
+};
+$('fixCancel').onclick = async () => {
+  const orig = flow.orig;
+  await saveFlow(null);
+  await fixApply(orig);
+  $('fixNote').textContent = 'Stopped. Your setting for ' + site + ' was put back.';
+};
+showFix();
+
 // Report a broken site: the details go to your clipboard, you paste them wherever you report the problem
 $('report').onclick = async () => {
   let page = '-';
@@ -148,4 +206,5 @@ $('report').onclick = async () => {
   window.shieldReport = text;
   try { await navigator.clipboard.writeText(text); $('reportNote').textContent = 'Copied. Paste it into your report (for example a uBlock Origin or EasyList issue) - Shield sent nothing.'; }
   catch { $('reportNote').textContent = 'Couldn\'t copy to the clipboard.'; }
+  showFix();
 };

@@ -26,9 +26,10 @@ export function addBlock(st, { t, cat, site = null, domain = null }, n = 1) {
   st.since ??= t;
   return st;
 }
-// one click on a cookie banner's "Reject"
+// one click on a cookie banner's "Reject" (1.5: per site too, for the popup's "N cookie banners answered here")
 export function addClick(st, t, site = null) {
   const b = bucket(st, t); b.clicks++;
+  if (site) { b.clickSites ||= {}; b.clickSites[site] = (b.clickSites[site] || 0) + 1; }
   st.since ??= t;
   return st;
 }
@@ -36,8 +37,8 @@ export function addClick(st, t, site = null) {
 export function prune(st, now = Date.now()) {
   const keep = new Set(lastDays(now).map(d => d.day));
   for (const k of Object.keys(st.days)) if (!keep.has(k)) delete st.days[k];
-  for (const b of Object.values(st.days)) for (const f of ['sites', 'domains']) {
-    const e = Object.entries(b[f]);
+  for (const b of Object.values(st.days)) for (const f of ['sites', 'domains', 'clickSites']) {
+    const e = Object.entries(b[f] || {});
     if (e.length > KEEP_PER_DAY) b[f] = Object.fromEntries(e.sort((x, y) => y[1] - x[1]).slice(0, KEEP_PER_DAY));
   }
   return st;
@@ -65,6 +66,14 @@ export function summary(st, now = Date.now(), top = 10) {
     topDomains: merge('domains').filter(([d]) => d !== SHARED).slice(0, top),
     shared: merge('domains').find(([d]) => d === SHARED)?.[1] || 0,
   };
+}
+
+// cookie banners answered on one site (and its subdomains) in the last 30 days
+export function clicksOn(st, site, now = Date.now()) {
+  if (!site) return 0;
+  let n = 0;
+  for (const { day } of lastDays(now)) for (const [k, v] of Object.entries((st.days[day] || {}).clickSites || {})) if (k === site || k.endsWith('.' + site)) n += v;
+  return n;
 }
 
 // which lists count as ads and which as trackers (the rest - badware, cookie banners, annoyances, My filters - "other")

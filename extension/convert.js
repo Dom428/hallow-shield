@@ -343,6 +343,10 @@ export const SCRIPTLET_ALIASES = {
   'trusted-set-local-storage-item': 'trusted-set-local-storage-item', 'trusted-set-session-storage-item': 'trusted-set-session-storage-item',
   'trusted-prevent-fetch': 'prevent-fetch', 'trusted-prevent-xhr': 'prevent-xhr',
   'window-close-if': 'window-close-if', 'close-window': 'window-close-if', 'alert-buster': 'alert-buster',
+  // 1.5: JSON editing, argument replacement, link cleaning, blank-frame bypasses
+  ...Object.fromEntries(['json-edit', 'json-edit-fetch-response', 'json-edit-xhr-response', 'jsonl-edit-fetch-response', 'jsonl-edit-xhr-response',
+    'json-edit-fetch-request', 'json-edit-xhr-request', 'edit-inbound-object', 'edit-outbound-object'].flatMap(n => [[n, n], ['trusted-' + n, 'trusted-' + n]])),
+  'trusted-replace-argument': 'trusted-replace-argument', 'href-sanitizer': 'href-sanitizer', 'trusted-prevent-dom-bypass': 'trusted-prevent-dom-bypass',
   // not a page script: Shield's cookie-banner clicker (clicker.js, isolated world) runs these, for the cookie lists only
   'trusted-click-element': 'trusted-click-element',
 };

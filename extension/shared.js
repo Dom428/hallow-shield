@@ -34,6 +34,14 @@ export function siteOf(url) {
   try { const u = new URL(url); if (!/^https?:$/.test(u.protocol)) return null; return u.hostname.replace(/^www\./, '').toLowerCase(); } catch { return null; }
 }
 export const onList = (host, list) => list.some(d => host === d || host.endsWith('.' + d));
+// 1.5: the class or id a generic hiding selector starts with (".ad-box > a" or "div.ad-box" -> ".ad-box"), or null.
+// Selectors with a token are only sent to a page that has that class / id (content.js reports them); the others stay
+// in generic.css.
+export function genericKey(sel) {
+  if (sel.includes(',')) return null;
+  const m = /^(?:[a-zA-Z][a-zA-Z0-9]*)?([.#])(-?[A-Za-z_][\w-]*)(?=$|[\s.#:[>+~])/.exec(sel);
+  return m ? m[1] + m[2] : null;
+}
 
 // what Shield does on one site, from the cosmetic entries of its keys ({ h, x, s, p } per key, see tools/build.mjs):
 //   { css, proc } - css for the browser to add, procedural programs for cosmetic.js
@@ -61,19 +69,40 @@ export const validDomain = d => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d);
 export const patternsFor = domains => domains.filter(validDomain).map(d => `*://*.${d}/*`);
 // the popup's group switches: cookie banners hidden unless switched off, other annoyances only when switched on
 export const groupOn = (s, g) => g === 'main' || !g ? true : g === 'cookies' ? s.cookies !== false : g === 'annoyances' ? s.annoyances === true : false;
-// per-site mode: "off" (= paused), "strict" (Complete + annoyances on that site only) or "normal" (the global settings)
+// per-site mode: "off" (= paused), "strict" (Complete + annoyances on that site only), "normal" (the global settings),
+// and since 1.5 the two in-between steps "Try fixing this site" can leave a site on: "nohide" (blocking and page fixes,
+// no hiding) and "blockonly" (blocking only: no hiding, no page fixes, no cookie-banner clicks)
+// storage key of each mode's site list
+export const MODE_KEYS = { off: 'paused', strict: 'strict', nohide: 'noHide', blockonly: 'blockOnly' };
 export function siteModeOf(s, host) {
   if (!host) return 'normal';
   if (onList(host, s.paused || [])) return 'off';
+  if (onList(host, s.blockOnly || [])) return 'blockonly';
+  if (onList(host, s.noHide || [])) return 'nohide';
   if (onList(host, s.strict || [])) return 'strict';
   return 'normal';
 }
-// the new paused / strict lists after choosing a mode for a site
+// the new site lists after choosing a mode for a site
 export function withSiteMode(s, site, mode) {
-  const paused = (s.paused || []).filter(d => d !== site), strict = (s.strict || []).filter(d => d !== site);
-  if (mode === 'off') paused.push(site);
-  if (mode === 'strict') strict.push(site);
-  return { paused: paused.slice(-500), strict: strict.slice(-500) };
+  const out = {};
+  for (const [m, k] of Object.entries(MODE_KEYS)) {
+    const l = (s[k] || []).filter(d => d !== site);
+    if (mode === m) l.push(site);
+    out[k] = l.slice(-500);
+  }
+  return out;
+}
+// "Try fixing this site": the steps it goes through, mildest first, and what each one means
+export const FIX_STEPS = ['normal', 'nohide', 'blockonly', 'off'];
+export const MODE_LABEL = {
+  strict: 'Strict', normal: 'Normal', off: 'Off (paused)',
+  nohide: 'No hiding (blocking and page fixes only)', blockonly: 'Blocking only (no hiding, no page fixes)',
+};
+// the badge colour (the count on Shield's toolbar icon): follows the blocking level, or the site's own mode
+export const BADGE_COLORS = { basic: '#5b6b85', optimal: '#f07820', complete: '#e0306a', strict: '#c0392b', nohide: '#5b6b85', blockonly: '#5b6b85', off: '#3a3248' };
+export function badgeColor(level, mode = 'normal') {
+  if (mode && mode !== 'normal' && BADGE_COLORS[mode]) return BADGE_COLORS[mode];
+  return BADGE_COLORS[LEVELS.includes(level) ? level : DEFAULT_LEVEL];
 }
 const within = (a, b) => a === b || a.endsWith('.' + b);
 // a list rule for Strict sites only: its initiator sites narrowed to those sites (null if it can't apply there, or is a

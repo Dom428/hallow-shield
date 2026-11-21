@@ -7,6 +7,7 @@
     <div id="site" class="host">-</div>
     <div id="count" class="count">-</div>
     <div id="countText" class="muted">blocked on this page</div>
+    <div id="clicksHere" class="muted small" hidden></div>
     <div class="label mode-label">This site</div>
     <div class="seg" id="mode" role="radiogroup" aria-label="Shield on this site">
       <button data-mode="strict" role="radio" title="Complete blocking plus annoyances, on this site only">Strict</button>
@@ -41,6 +42,13 @@
   <section class="report">
     <button id="report" class="big secondary">Report a broken site</button>
     <p id="reportNote" class="muted small"></p>
+    <button id="fix" class="big" hidden>Try fixing this site</button>
+    <div id="fixPanel" hidden>
+      <p id="fixStep" class="small"></p>
+      <p class="fix-q"><b>Is it working now?</b></p>
+      <div class="row"><button id="fixYes" class="small-btn">Yes</button><button id="fixNo" class="small-btn">No, next step</button><button id="fixCancel" class="small-btn">Cancel</button></div>
+    </div>
+    <p id="fixNote" class="muted small"></p>
   </section>
   <footer class="muted small">The browser blocks them itself - Hallow Shield never sees or sends what you browse.<br>
     Lists: uBlock filters, EasyList, EasyPrivacy, Peter Lowe's list, EasyList Cookie, Fanboy's Annoyances and Social (see LISTS-LICENSE.txt). Approach after

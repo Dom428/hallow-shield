@@ -32,11 +32,17 @@ assert.ok(meta.scriptlets.used['json-prune'] || meta.scriptlets.used['set-consta
 assert.ok(meta.scriptlets.clicks.filters > 300 && meta.scriptlets.clicks.sites > 300, 'cookie-banner click filters: ' + JSON.stringify(meta.scriptlets.clicks));
 console.log('cookie-banner click filters: ' + JSON.stringify(meta.scriptlets.clicks) + '; scriptlet filters still skipped: ' + meta.scriptlets.filtersSkipped);
 console.log('skipped scriptlets: ' + JSON.stringify(Object.entries(meta.scriptlets.skipped).sort((a, b) => b[1] - a[1]).slice(0, 25)));
+// 1.5: the new scriptlets run real filters, and fewer are skipped than 1.4's 512
+const used15 = ['trusted-replace-argument', 'href-sanitizer', 'trusted-prevent-dom-bypass', 'json-edit', 'trusted-json-edit', 'trusted-json-edit-fetch-response'].map(n => [n, meta.scriptlets.used[n] || 0]);
+console.log('1.5 scriptlets used: ' + JSON.stringify(used15));
+assert.ok(used15.filter(([, n]) => n > 0).length >= 4, '1.5 scriptlets in use: ' + JSON.stringify(used15));
+assert.ok(meta.scriptlets.filtersSkipped < 512, 'skipped scriptlet filters: ' + meta.scriptlets.filtersSkipped);
 assert.ok(L['easylist-cookies'].cosmetic > 1000 && L['ublock-cookies'].lines > 1000 && L['ublock-annoyances'].lines > 1000 && L['fanboy-annoyances'].cosmetic > 1000 && L['fanboy-social'].cosmetic > 500,
   'annoyance lists converted: ' + JSON.stringify(Object.fromEntries(['ublock-cookies', 'easylist-cookies', 'ublock-annoyances', 'fanboy-annoyances', 'fanboy-social'].map(k => [k, [L[k].lines, L[k].network, L[k].cosmetic]]))));
 // a few real generic selectors of the plain ".class" / "#id" kind, to put on a test page
-const simple = file => fs.readFileSync(path.join(EXT, 'rules', file), 'utf8').split('\n').map(l => l.replace(/\{display:none!important\}$/, '')).filter(s => /^[.#][a-zA-Z][\w-]*$/.test(s));
-const COOKIE_SEL = simple('cookies/generic.css').slice(0, 5), ANNOY_SEL = simple('annoyances/generic.css').slice(0, 5);
+// (1.5: generic selectors that start with a class / id are in generic-keys.json, looked up for the names a page uses)
+const simple = file => Object.values(JSON.parse(fs.readFileSync(path.join(EXT, 'rules', file), 'utf8'))).flat().filter(s => /^[.#][a-zA-Z][\w-]*$/.test(s));
+const COOKIE_SEL = simple('cookies/generic-keys.json').slice(0, 5), ANNOY_SEL = simple('annoyances/generic-keys.json').slice(0, 5);
 assert.ok(COOKIE_SEL.length && ANNOY_SEL.length, 'simple generic selectors in the cookie and annoyance lists');
 const boxes = (sels, tag) => sels.map((s, i) => s[0] === '#' ? `<div id="${s.slice(1)}" data-t="${tag}${i}">x</div>` : `<div class="${s.slice(1)}" data-t="${tag}${i}">x</div>`).join('');
 

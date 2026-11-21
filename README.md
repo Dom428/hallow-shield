@@ -38,6 +38,12 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
   initial data and from its player API responses (fetch and XHR) before the player sees it.
 - **Fast and private:** the browser blocks requests itself (`declarativeNetRequest`). Shield's code never sees what
   you browse, there's no Hallow server, and the extension never downloads anything. See [PRIVACY.md](PRIVACY.md).
+  **Measured in CI** on every build (`npm run perf`): a heavy local page (about 4,000 elements, 140 images and
+  scripts, 6 frames, 20 ms per response) loads in 513 ms without Shield and 559 ms with Shield at Optimal and the real
+  lists (+46 ms, 9 %; Shield's content scripts and page fixes: 17 ms of script time). With the same page served
+  instantly it's +59 ms - most of that is the browser applying 24,000 blocking rules to 140 requests; Shield 1.4 added
+  about 300 ms to that instant page (see Honest limits). The build fails if Shield adds more than 15 % or 50 ms (a CI
+  machine has noisy minutes, so a round over budget gets up to two fresh rounds).
 - **More than plain blocking:** regex filters (checked by the browser at build time), `$redirect` to Shield's own
   harmless stand-ins (so pages that expect an ad library keep working), `$removeparam` (tracking parameters such as
   `utm_source` and `fbclid` stripped), `$csp`, `$important`, `$badfilter`, `$denyallow`, `$to`/`$from`, `$document`
@@ -49,17 +55,29 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
   `json-prune` (+ fetch / XHR response), `abort-on-property-read/write`, `abort-current-script`, `prevent-fetch`,
   `prevent-xhr`, `prevent-setTimeout/setInterval`, `remove-attr/class`, `remove/replace-node-text`,
   `trusted-replace-fetch/xhr-response`, `no-window-open-if`, `addEventListener-defuser`, `adjust-setTimeout/setInterval`
-  and more (38 in all) - running in the page at document start on the sites the lists name.
+  and, new in 1.5, `trusted-replace-argument`, `href-sanitizer` (tracking links get their real destination),
+  `trusted-prevent-dom-bypass`, the `json-edit` family (`json-edit`, `json-edit-fetch-response`,
+  `json-edit-xhr-response`, `jsonl-edit-*`, `json-edit-*-request` and their `trusted-` twins, with uBO's documented
+  JSONPath-like syntax: `..key`, `.*`, `[?.a=="b"]` / `[?@.a>1]` filters, `^=` `$=` `*=` `=/regex/`, `=value`,
+  `+={...}`, `repl()`, `;` sub-queries with quantifiers) and `edit-inbound/outbound-object` - 59 in all, running in the
+  page at document start on the sites the lists name.
 - **Blocking: Basic / Optimal / Complete,** like uBO Lite. *Basic* blocks requests only and runs nothing in pages.
   *Optimal* (the default) adds ad-box hiding and the page fixes on the sites Shield may access. *Complete* adds strict
   blocking of pop-up and pop-under ad sites.
+- **Try fixing this site** (new in 1.5, offered after **Report a broken site**): Shield steps the site through
+  *Normal*, *No hiding* (blocking and page fixes only), *Blocking only* and *Off*, reloading the tab each time and asking
+  "Is it working now?". The mildest step that works stays as that site's own setting (listed under **Sites**, with
+  Delete); Cancel, or a site that's broken even with Shield off, puts your setting back. All local.
+- **The badge follows the level:** the blocked count on Shield's icon is orange at Optimal, pink at Complete, slate at
+  Basic (and on No hiding / Blocking only sites), red on a Strict site. The popup also says **"N cookie banners answered
+  here"** when Shield clicked "Reject" on that site in the last 30 days.
 - **Off on this site** (Pause) in one click, a per-page blocked count, and **Report a broken site**, which copies the
   details to your clipboard (nothing is sent).
 
 ## Install
 
 Download the zip for your browser from the [latest release](https://github.com/Dom428/hallow-shield/releases/latest)
-(`hallow-shield-chrome-1.4.zip` or `hallow-shield-firefox-1.4.zip`) and unzip it into a folder of its own - or let
+(`hallow-shield-chrome-1.5.zip` or `hallow-shield-firefox-1.5.zip`) and unzip it into a folder of its own - or let
 [Hallow Setup](https://github.com/Dom428/hallow-setup) 1.6 do it (it checks GitHub's checksum and keeps the folder up to
 date). Each zip has a `version.json` with its version and build date.
 
@@ -76,9 +94,12 @@ date). Each zip has a `version.json` with its version and build date.
   `$redirect-rule` for broad patterns (311 skipped), no `$replace`/`$urlskip`/`$header`/`$cname`, no HTML filtering
   (`##^`), no regex `$removeparam`, no entity domains (`site.*`) in network filters (about 340 skipped). Cosmetic and
   scriptlet filters *do* support entities.
-- **About 512 scriptlet filters are still skipped** (1.2: 1,364) - the ones using scriptlets Shield doesn't
-  implement yet: `trusted-replace-argument` (92), `href-sanitizer` (74), `trusted-prevent-dom-bypass` (30), the 30 `trusted-click-element` filters outside the cookie lists (not used on purpose), `trusted-replace-outbound-text`, the `json-edit` family, `nobab`, `trusted-create-html`, .... A handful are YouTube quick fixes; the main YouTube filters (initial data, player API)
-  all run.
+- **About 224 scriptlet filters are still skipped** (1.4: 512, 1.2: 1,364) - the ones using scriptlets Shield doesn't
+  implement yet: the 30 `trusted-click-element` filters outside the cookie lists (not used on purpose),
+  `trusted-replace-outbound-text` (22), `nobab` (21), `trusted-suppress-native-method` (20), `trusted-create-html` (20),
+  `xml-prune` (18), `refresh-defuser` (12), .... The JSONPath edits support uBO's documented syntax except `=call()`,
+  slices and `||` / `&&` in filters (a filter using those does nothing). A handful are YouTube quick fixes; the main
+  YouTube filters (initial data, player API) all run.
 - **YouTube changes often.** The YouTube filters are uBO's; Shield is tested against a local page shaped like
   YouTube's (initial player data + player API), not against youtube.com itself, and gets uBO's fixes only when a new
   Shield version is built (weekly) - full uBO updates its lists more often.
@@ -104,6 +125,14 @@ date). Each zip has a `version.json` with its version and build date.
   their regex, redirect and header rules are left out) plus their hiding and page fixes.
 - **Hiding needs Optimal or Complete** for the lists' filters. What you hid yourself (zapper, My filters) is also
   applied at Basic.
+- **Generic hiding comes once the page is parsed (1.5).** The lists' hiding rules for every site that start with a class
+  or id (about 13,000 of 13,900) are no longer one big stylesheet in every frame - that cost a heavy page with frames
+  about 100 ms. Shield's content script reports the class and id names a page uses when it has been parsed (and as it
+  changes), and only the matching rules are added. A box hidden only by such a generic rule can show for a moment while
+  the page loads; site-specific hiding still applies from the start.
+- **Page fixes are bundled per top-level domain (1.5)** (`.com`, `.de`, ...; the small ones share a bundle), each
+  registered with one pattern instead of one per site: 1.4's 36,000 site patterns were checked by the browser for every
+  frame. The bundle looks the page's site up itself, so a `.com` page loads the `.com` bundle (about 0.7 MB).
 - **Pop-ups:** the browser can't tell a pop-up from any other new tab, so `$popup` filters only become rules for whole
   ad hosts opened from another site, and only at *Complete*.
 - **Firefox:** the Firefox package is built and linted in CI, but the end-to-end tests run in Chromium only.
@@ -119,9 +148,13 @@ date). Each zip has a `version.json` with its version and build date.
   annoyances on and off, the zapper (hide + reload, zap once, Esc, inside a frame), My filters (network + hiding,
   errors per line, export / import), cookie banners answered (Reject clicked, Accept never; chains, closed shadow roots,
   frames, cookie conditions, exceptions; nothing when paused, switched off or at Basic), Strict / Normal / Off and the
-  Sites list, stats counted and cleared, the popup), `npm run smoke` (the real rules: they all load, real ad servers are blocked, uBO's
+  Sites list, stats counted and cleared, the popup; 1.5: json-edit on fetch / XHR / JSON.parse, href-sanitizer,
+  trusted-replace-argument, trusted-prevent-dom-bypass, the badge colours, "Try fixing this site", "N cookie banners
+  answered here"), `npm run smoke` (the real rules: they all load, real ad servers are blocked, uBO's
   real YouTube filters clean a fake YouTube page, and real cookie-notice and annoyance selectors hide boxes on a test
-  page). CI runs all of them on every push and every Monday. `node tools/explain.mjs <url> <page>` shows which filters
+  page), `npm run perf` (a heavy local page with and without Shield at Optimal, with the real rules: fails if Shield adds
+  more than 15 % or 50 ms to the load time, or more than 50 ms of script time). CI runs all of them on every push and
+  every Monday. `node tools/explain.mjs <url> <page>` shows which filters
   touch a request and what became of them.
 
 ## Credits

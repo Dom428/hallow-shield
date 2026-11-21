@@ -18,8 +18,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { convertList, validRule, preprocess, badfilters, merge } from './convert.mjs';
-import { SCRIPTLETS, bundle, bundleMany } from './scriptlets.mjs';
+import { SCRIPTLETS, bundleSites } from './scriptlets.mjs';
 import { LISTS, POPUPS, RULESET_IDS, ENV, GROUPS, COSMETIC_GROUPS, DEFAULT_ON, cosmeticGroup } from './lists.mjs';
+import { genericKey } from '../extension/shared.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'extension', 'rules');
@@ -133,7 +134,12 @@ const css = set => [...set].filter(s => !genericExcept.has(s)).map(s => `${s}{di
 for (const g of COSMETIC_GROUPS) {
   const dir = g === 'main' ? OUT : path.join(OUT, g), { generic, specificGeneric, sites } = G[g];
   fs.mkdirSync(path.join(dir, 'cosmetic'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'generic.css'), css(generic));
+  // 1.5: generic selectors that start with a class or id go to generic-keys.json (looked up for the classes / ids a
+  // page really has); only the rest is a stylesheet in every frame - 14,000 selectors in every frame cost page loads a lot
+  const keyed = {}, rest = new Set();
+  for (const s of generic) { if (genericExcept.has(s)) continue; const k = genericKey(s); if (k) (keyed[k] ||= []).push(s); else rest.add(s); }
+  fs.writeFileSync(path.join(dir, 'generic.css'), css(rest));
+  fs.writeFileSync(path.join(dir, 'generic-keys.json'), JSON.stringify(keyed));
   fs.writeFileSync(path.join(dir, 'specific-generic.css'), css(specificGeneric));
   const shards = Array.from({ length: SHARDS }, () => ({}));
   for (const [k, v] of Object.entries(sites)) {
@@ -145,7 +151,7 @@ for (const g of COSMETIC_GROUPS) {
     shards[hash(k)][k] = o;
   }
   shards.forEach((s, i) => fs.writeFileSync(path.join(dir, 'cosmetic', i + '.json'), JSON.stringify(s)));
-  const c = { generic: [...generic].filter(s => !genericExcept.has(s)).length, specificGeneric: specificGeneric.size, sites: Object.keys(sites).length,
+  const c = { generic: [...generic].filter(s => !genericExcept.has(s)).length, genericKeyed: Object.values(keyed).reduce((n, l) => n + l.length, 0), genericCss: rest.size, specificGeneric: specificGeneric.size, sites: Object.keys(sites).length,
     procedural: Object.values(sites).reduce((n, v) => n + v.p.length, 0), style: Object.values(sites).reduce((n, v) => n + v.s.length, 0) };
   if (g === 'main') meta.cosmetic = { ...c, generichide: flags.generichide.size, elemhide: flags.elemhide.size, specifichide: flags.specifichide.size };
   else meta.groups[g] = { name: GROUPS[g].name, on: GROUPS[g].on, lists: LISTS.filter(l => cosmeticGroup(l) === g).map(l => l.id), cosmetic: c };
@@ -214,26 +220,36 @@ function scriptletGroup(group) {
     for (const [k, list] of Object.entries(b.exc)) { const l = list.filter(i => i < 0 || map.has(i)).map(i => i < 0 ? -1 : map.get(i)); if (l.length) exc[k] = l; }
     return { args, hosts, exc };
   };
-  const entityParts = {};
+  // 1.5: one bundle per top-level domain (".com", ".de", ...; the small ones share one), registered with one match
+  // pattern per TLD instead of one per site: the browser checks every pattern of every registered script for every frame,
+  // and 1.4's 36,000 site patterns cost a heavy page with frames about 100 ms. Each bundle finds the page's site in its
+  // own table. Filters for "name.*" sites (entities) go into one bundle for every page, as before.
+  const byTld = {}, entityHosts = {};
   for (const [canon, b] of Object.entries(per)) {
     for (const g of globalOff) { const [c, i] = g.split(' '); if (c === canon) for (const k of Object.keys(b.hosts)) b.hosts[k] = b.hosts[k].filter(x => x !== Number(i)); }
-    const live = Object.keys(b.hosts).filter(h => b.hosts[h].length);
-    const hosts = live.filter(validHost).sort(), entities = live.filter(h => h.endsWith('.*'));
-    if (entities.length) entityParts[canon] = subset(b, entities);
-    if (!hosts.length) continue;
-    const set = new Set(hosts);
-    const top = hosts.filter(h => { const p = h.split('.'); for (let i = 1; i < p.length - 1; i++) if (set.has(p.slice(i).join('.'))) return false; return true; });
-    const file = `rules/js/${prefix}${canon}.js`;
-    fs.writeFileSync(path.join(ROOT, 'extension', file), bundle(canon, subset(b, hosts)));
-    registered.push({ id: prefix + canon, group, file, matches: top.map(h => `*://*.${h}/*`) });
+    for (const h of Object.keys(b.hosts).filter(h => b.hosts[h].length)) {
+      if (h.endsWith('.*')) { (entityHosts[canon] ||= []).push(h); continue; }
+      if (!validHost(h)) continue;
+      const tld = h.slice(h.lastIndexOf('.') + 1);
+      if (/^\d+$/.test(tld)) continue;   // an IP address: not a site a pattern can name this way
+      ((byTld[tld] ||= {})[canon] ||= []).push(h);
+    }
   }
-  // filters for "name.*" sites can't be told to the browser as match patterns: one bundle for every page, which checks the
-  // site itself and stops at once on all the others
-  if (Object.keys(entityParts).length) {
-    const file = `rules/js/${prefix}_entities.js`;
-    fs.writeFileSync(path.join(ROOT, 'extension', file), bundleMany(entityParts, 'sites named as name.*'));
-    registered.push({ id: prefix + '_entities', group, file, matches: ['*://*/*'] });
+  const partsOf = m => Object.fromEntries(Object.entries(m).map(([c, hs]) => [c, subset(per[c], hs)]));
+  const write = (id, parts, matches, title) => {
+    const file = `rules/js/${prefix}${id}.js`, code = bundleSites(parts, title);
+    fs.writeFileSync(path.join(ROOT, 'extension', file), code);
+    registered.push({ id: prefix + id, group, file, matches, kb: Math.round(code.length / 1024) });
+  };
+  const size = m => Object.values(m).reduce((n, l) => n + l.length, 0);
+  const big = Object.keys(byTld).filter(t => size(byTld[t]) >= 200).sort(), small = Object.keys(byTld).filter(t => !big.includes(t)).sort();
+  for (const tld of big) write('tld-' + tld, partsOf(byTld[tld]), [`*://*.${tld}/*`], 'sites under .' + tld);
+  if (small.length) {
+    const merged = {};
+    for (const t of small) for (const [c, hs] of Object.entries(byTld[t])) (merged[c] ||= []).push(...hs);
+    write('tld-other', partsOf(merged), small.map(t => `*://*.${t}/*`), `sites under ${small.length} other top-level domains`);
   }
+  if (Object.keys(entityHosts).length) write('_entities', partsOf(entityHosts), ['*://*/*'], 'sites named as name.*');
 }
 for (const g of COSMETIC_GROUPS) scriptletGroup(g);
 fs.writeFileSync(path.join(OUT, 'scriptlets.json'), JSON.stringify(registered));
@@ -257,6 +273,7 @@ meta.skipped = skippedAll;
 fs.writeFileSync(path.join(OUT, 'meta.json'), JSON.stringify(meta, null, 1));
 console.log(`\ncosmetic: ${JSON.stringify(meta.cosmetic)}`);
 for (const [g, v] of Object.entries(meta.groups)) console.log(`group ${g} (${v.on ? 'on' : 'off'} by default): ${v.rules} rules, ${v.bundles} scriptlet bundles, cosmetic ${JSON.stringify(v.cosmetic)}`);
+console.log('scriptlet bundles (KB, match patterns): ' + registered.map(r => `${r.id} ${r.kb} KB/${r.matches.length}`).join(', '));
 console.log(`scriptlets: ${meta.scriptlets.filtersUsed} filters in ${registered.length} bundles (+ ${meta.scriptlets.clicks.filters} cookie-banner click filters for ${meta.scriptlets.clicks.sites} sites); skipped ${meta.scriptlets.filtersSkipped}:`, skipped);
 console.log(`total ${meta.total} rules (${regexTotal} regex); default lists ${meta.defaultOn}; every list ${meta.allLists}; enabled at install ${meta.enabledAtInstall} (guaranteed ${GUARANTEED})`);
 console.log('skipped filters:', Object.entries(skippedAll).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => `${k}: ${v}`).join(', '));
@@ -265,4 +282,10 @@ if (!sample) {
   console.log('\nYouTube scriptlet filters:');
   for (const s of sl) if ([...s.inc, ...s.exc].some(d => /(^|\.)youtube(-nocookie|kids)?\.com$/.test(d)))
     console.log(`  ${s.unsupported || !SCRIPTLETS[s.canonical] ? 'SKIPPED' : s.exception ? 'EXCEPT ' : 'ok     '} [${s.list}] ${s.inc.join(',')}##+js(${[s.name, ...s.args].join(', ')})`.slice(0, 400));
+  // 1.5: a sample of the real filters the new scriptlets run, to check them against (CI log)
+  const NEW = /^(trusted-)?(json-edit|jsonl-edit|edit-(in|out)bound-object)|^trusted-replace-argument$|^href-sanitizer$|^trusted-prevent-dom-bypass$/;
+  const count = {};
+  console.log('\n1.5 scriptlet filters (up to 8 of each):');
+  for (const s of sl) if (s.canonical && NEW.test(s.canonical) && !s.exception && (count[s.canonical] = (count[s.canonical] || 0) + 1) <= 8)
+    console.log(`  [${s.list}] ${s.inc.slice(0, 3).join(',')}##+js(${[s.name, ...s.args].join(', ')})`.slice(0, 300));
 }

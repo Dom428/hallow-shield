@@ -17,6 +17,10 @@ section, details { margin: 0 12px 10px; padding: 12px 14px; background: var(--pa
 button.big { margin-top: 10px; width: 100%; padding: 8px; border: 0; border-radius: 8px; background: var(--accent); color: #14101b; font-weight: 600; font-size: 13px; cursor: pointer; }
 button.big.paused, button.big.secondary { background: #3a3248; color: var(--text); }
 .report button.big { margin-top: 0; }
+.report #fix { margin-top: 10px; }
+#fixPanel { margin-top: 10px; padding: 10px; border: 1px solid var(--accent); border-radius: 8px; }
+#fixPanel p { margin: 0 0 8px; }
+#fixPanel .row { margin-top: 0; }
 button:disabled { opacity: .5; cursor: default; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button { flex: 1; padding: 7px 0; border: 0; background: transparent; color: var(--text); font: inherit; cursor: pointer; }

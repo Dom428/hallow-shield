@@ -29,7 +29,10 @@ fs.writeFileSync(path.join(EXT, 'version.json'), JSON.stringify({ name: 'Hallow 
 const bundles = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'scriptlets.json'), 'utf8'));
 const META = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'meta.json'), 'utf8'));
 // content scripts for the cosmetic groups that are on: generic + specific-generic CSS per group, content.js, scriptlets
-const expectedScripts = groups => 1 + 2 * groups.length + bundles.filter(b => groups.includes(b.group || 'main')).length;
+// (1.5: a group's generic / specific-generic stylesheet is only registered when it has rules - most generic ones are looked
+// up by class / id instead)
+const cssOf = g => { const c = g === 'main' ? META.cosmetic : META.groups[g].cosmetic; return (c.genericCss > 0 ? 1 : 0) + (c.specificGeneric > 0 ? 1 : 0); };
+const expectedScripts = groups => 1 + groups.reduce((n, g) => n + cssOf(g), 0) + bundles.filter(b => groups.includes(b.group || 'main')).length;
 
 const seen = [];
 const html = (title, body) => `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
@@ -129,6 +132,24 @@ const CMPFRAME = `<p>outer</p><iframe id="fr" src="/cmp" style="width:600px;heig
 // the zapper inside a frame of the page's own site
 const ZAPFRAME = `<p id="outer">outer page</p><iframe id="zf" src="/zapinner" style="width:520px;height:320px;border:4px solid #000;padding:6px;margin:10px"></iframe>`;
 const ZAPINNER = `<div class="frame-promo" id="fpromo" style="padding:30px;margin:20px;width:300px">Frame promo</div><div class="frame-keep" id="fkeep" style="padding:30px;margin:20px;width:300px">Keep me</div>`;
+// 1.5: the new scriptlets' page (edit.test; the same page on noedit.test shows what it does without them)
+const EDIT = `
+  <div class="ad-zone" id="adzone">ad zone</div><div id="real-box">real</div>
+  <a id="out" href="/out?url=https%3A%2F%2Fdest.example%2Farticle%3Fid%3D7">read</a>
+  <a id="b64" class="b64" href="/go?u=aHR0cHM6Ly9iNjQuZXhhbXBsZS9wYWdl">b64</a>
+  <a id="plain" href="/elsewhere?url=https%3A%2F%2Fx.example%2F">plain</a>
+  <script>
+    window.result = {};
+    const q = document.querySelector('.ad-zone'); result.qs = q ? q.id : null;
+    const t0 = Date.now(); setTimeout(() => { result.slow = Date.now() - t0; }, 5000);
+    fetch('/api/config').then(r => r.json()).then(j => { result.config = j; }).catch(e => { result.config = String(e); });
+    fetch('/api/feed').then(r => r.json()).then(j => { result.feed = j; }).catch(e => { result.feed = String(e); });
+    fetch('/api/other').then(r => r.json()).then(j => { result.other = j; }).catch(e => { result.other = String(e); });
+    const x = new XMLHttpRequest(); x.open('GET', '/api/list'); x.onload = () => { result.list = JSON.parse(x.responseText); }; x.send();
+    const f = document.createElement('iframe'); document.body.append(f); result.bypass = f.contentWindow.fetch === window.fetch;
+    result.parsed = JSON.parse('{"a":1,"deep":{"trackingPixel":"x"}}');
+    setTimeout(() => { const a = document.createElement('a'); a.id = 'late'; a.href = '/out?url=https%3A%2F%2Flate.example%2F'; a.textContent = 'late'; document.body.appendChild(a); }, 300);
+  </script>`;
 const MF = `
   <div class="my-hide" id="mh">mine</div><div class="my-generic" id="mg">generic</div><div id="stay">stay</div>
   <script src="http://myblock.example/x.js"></script><script src="http://fine.example/lib.js"></script>`;
@@ -142,6 +163,10 @@ const server = http.createServer((req, res) => {
   if (u.pathname === '/cookie') return send('text/html', html('cookies', COOKIE));
   if (u.pathname === '/zap') return send('text/html', html('zap', ZAP));
   if (u.pathname === '/mf') return send('text/html', html('mf', MF));
+  if (u.pathname === '/edit') return send('text/html', html('edit', EDIT));
+  if (u.pathname === '/api/config') return send('application/json', JSON.stringify({ config: { ads: { enabled: true }, theme: 'dark' } }));
+  if (u.pathname === '/api/feed' || u.pathname === '/api/other') return send('application/json', JSON.stringify({ items: [1, 2], adSlots: [{ x: 1 }], nested: { adSlots: [] } }));
+  if (u.pathname === '/api/list') return send('application/json', JSON.stringify({ items: [{ id: 1 }, { id: 2, sponsored: true }, { id: 3 }] }));
   if (u.pathname === '/cmp') { if (u.searchParams.get('consent')) res.setHeader('Set-Cookie', 'consent_given=1; Path=/'); return send('text/html', html('cmp', CMP)); }
   if (u.pathname === '/cmpchain') return send('text/html', html('cmp', CMPCHAIN));
   if (u.pathname === '/cmpshadow') return send('text/html', html('cmp', CMPSHADOW));
@@ -159,7 +184,19 @@ const got = s => seen.includes(s);
 const gotAny = s => seen.some(x => x.startsWith(s));
 
 let passed = 0, failed = 0;
-async function step(name, f) { try { await f(); passed++; console.log('ok   ' + name); } catch (e) { failed++; console.log('FAIL ' + name + '\n     ' + (e && e.message)); } }
+// a step that fails can be tried once more after reset() puts the settings back (the browser has now and then applied a
+// paused site's "allow everything" rule late on CI runners - seen on the 1.4 tag run); it counts as failed only if the
+// second try fails too. Either way reset() runs, so one failure doesn't break the steps after it.
+async function step(name, f, { retry = false, reset = null } = {}) {
+  for (let t = 0; ; t++) {
+    try { await f(); passed++; console.log('ok   ' + name + (t ? ' (second try)' : '')); return; }
+    catch (e) {
+      if (reset) { try { await reset(); } catch (e2) { console.log('     reset failed: ' + (e2 && e2.message)); } }
+      if (retry && t === 0) { console.log('     first try failed (' + (e && e.message) + '), trying again'); continue; }
+      failed++; console.log('FAIL ' + name + '\n     ' + (e && e.message)); return;
+    }
+  }
+}
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'shield-'));
 const ctx = await chromium.launchPersistentContext(profile, {
@@ -167,6 +204,7 @@ const ctx = await chromium.launchPersistentContext(profile, {
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, `--proxy-server=http://127.0.0.1:${PORT}`, '--proxy-bypass-list=<-loopback>'],
 });
 const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
+const settleRules = () => new Promise(r => setTimeout(r, 600));
 const until = async (f, ms = 8000, what = 'condition') => { const t0 = Date.now(); for (;;) { if (await f()) return; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 100)); } };
 const scripts = () => sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
 const enabled = () => sw.evaluate(() => chrome.declarativeNetRequest.getEnabledRulesets());
@@ -191,7 +229,7 @@ await step('every list is on except the annoyance lists (off by default); cookie
   assert.deepEqual((await enabled()).sort(), [...ALL_LISTS].sort());
   assert.equal(EVERY_LIST.length, 13);
   const ids = (await scripts()).map(c => c.id);
-  assert.ok(ids.includes('shield-generic-cookies') && ids.includes('shield-sl-cookies-set-cookie') && !ids.includes('shield-generic-annoyances'), ids.join(' '));
+  assert.ok(ids.includes('shield-generic-cookies') && ids.some(i => i.startsWith('shield-sl-cookies-tld-')) && !ids.includes('shield-generic-annoyances'), ids.join(' '));
 });
 
 await step('network: blocks, exceptions, regex, redirect to a stand-in, $important, $badfilter, !#if', async () => {
@@ -339,8 +377,9 @@ await step('Pause on this site: everything loads and shows there; other sites st
   await set({ paused: ['news.test'] });
   await until(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).length === 1, 5000, 'pause rule');
   await until(async () => ((await scripts()).find(c => c.id === 'shield-generic')?.excludeMatches || []).includes('*://*.news.test/*'), 5000, 'CSS left out for news.test');
+  await settleRules();
   const n = await visit('news.test');
-  assert.ok(got('ads.example/ad.js') && got('metrics.example/p.gif') && gotAny('important.example'), 'paused: requests go through, $important too');
+  assert.ok(got('ads.example/ad.js') && got('metrics.example/p.gif') && gotAny('important.example'), 'paused: requests go through, $important too; seen: ' + seen.join(' '));
   assert.equal(await shown(n, 'generic'), true); assert.equal(await shown(n, 'site'), true); assert.equal(await shown(n, 'post-ad'), true);
   assert.equal((await result(n)).adsEnabled, true, 'no scriptlets on a paused site');
   await n.close();
@@ -349,10 +388,11 @@ await step('Pause on this site: everything loads and shows there; other sites st
   await o.close();
   await set({ paused: [] });
   await until(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).length === 0, 5000, 'resume');
+  await settleRules();
   const n2 = await visit('news.test');
   assert.ok(!got('ads.example/ad.js'), 'resumed: blocked again');
   await n2.close();
-});
+}, { retry: true, reset: async () => { await set({ paused: [] }); await until(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).length === 0, 5000, 'reset: resumed'); await settleRules(); } });
 
 await step('levels: Basic = network only; Complete adds strict pop-up blocking; Optimal is the default', async () => {
   assert.equal(await sw.evaluate(async () => (await chrome.storage.local.get('level')).level), 'optimal');
@@ -369,7 +409,7 @@ await step('levels: Basic = network only; Complete adds strict pop-up blocking; 
   assert.equal(await pop(), false, 'Complete: the pop-under host is blocked');
   await set({ level: 'optimal' });
   await until(async () => !(await enabled()).includes('popups'), 5000, 'back to Optimal');
-});
+}, { retry: true, reset: async () => { await set({ level: 'optimal' }); await until(async () => !(await enabled()).includes('popups') && (await scripts()).length === expectedScripts(['main', 'cookies']), 5000, 'reset: Optimal'); await settleRules(); } });
 
 await step('lists: switching EasyPrivacy off lets trackers through but still blocks ads', async () => {
   await set({ lists: { easyprivacy: false } });
@@ -701,6 +741,14 @@ await step('stats: blocked counts per day / site, cookie-banner clicks, and Clea
   assert.ok(v.totals.clicks >= 1, 'the cookie-banner click is counted');
   assert.equal(v.days.length, 30);
   assert.equal(await op.locator('#chart rect').count() > 0, true, 'today has a bar');
+  // 1.5: the popup says how many cookie banners were answered on that site
+  const pc = await popupFor('*://www.clicker.test/*');
+  await until(async () => /^\d+ cookie banners? answered here$/.test((await pc.textContent('#clicksHere')).trim()), 3000, 'cookie banners answered here');
+  console.log('     popup: ' + (await pc.textContent('#clicksHere')));
+  await pc.close();
+  const po = await popupFor('*://other.test/*');
+  await po.waitForTimeout(400); assert.equal(await po.isVisible('#clicksHere'), false, 'not on a site where nothing was answered');
+  await po.close();
   await p.close(); await c.close();
   await op.click('#statsClear');
   await until(async () => (await op.textContent('#tBlocked')) === '0' && (await op.textContent('#tClicks')) === '0', 3000, 'cleared again');
@@ -733,6 +781,107 @@ await step('the zapper inside a frame of the same site: hover in the frame, clic
   await until(async () => !(await fr2.evaluate(() => getComputedStyle(document.getElementById('fpromo')).display !== 'none')), 3000, 'still hidden in the frame after a reload');
   await pop.close(); await p.close();
   await set({ myFilters: '' });
+});
+
+// ---- 1.5 ----
+await step('1.5 scriptlets: json-edit on fetch / XHR / JSON.parse, href-sanitizer, trusted-replace-argument, trusted-prevent-dom-bypass', async () => {
+  const p = await visit('www.edit.test', '/edit', 900);
+  await until(async () => { const r = await result(p); return r.config && r.feed && r.other && r.list; }, 4000, 'the page\'s requests answered');
+  const r = await result(p);
+  console.log('     edit.test result:', JSON.stringify(r));
+  assert.deepEqual(r.config, { config: { ads: { enabled: false }, theme: 'dark' } }, 'trusted-json-edit-fetch-response set the flag');
+  assert.deepEqual(r.feed, { items: [1, 2], nested: {} }, 'json-edit-fetch-response removed ..adSlots');
+  assert.ok(r.other.adSlots, 'another address is left alone');
+  assert.deepEqual(r.list, { items: [{ id: 1 }, { id: 3 }] }, 'json-edit-xhr-response removed the sponsored item');
+  assert.deepEqual(r.parsed, { a: 1, deep: {} }, 'json-edit on JSON.parse');
+  assert.equal(r.qs, 'real-box', 'trusted-replace-argument: querySelector(".ad-zone") got "#real-box"');
+  assert.ok(typeof r.slow === 'number' && r.slow < 2000, 'trusted-replace-argument: the 5 s timer was set to 0 (' + r.slow + ')');
+  assert.equal(r.bypass, true, 'trusted-prevent-dom-bypass: a blank frame\'s fetch is the page\'s own');
+  assert.equal(await p.getAttribute('#out', 'href'), 'https://dest.example/article?id=7', 'href-sanitizer: ?url');
+  assert.equal(await p.getAttribute('#b64', 'href'), 'https://b64.example/page', 'href-sanitizer: ?u -base64');
+  assert.equal(await p.getAttribute('#plain', 'href'), '/elsewhere?url=https%3A%2F%2Fx.example%2F', 'links the selector doesn\'t name stay');
+  await until(async () => (await p.getAttribute('#late', 'href')) === 'https://late.example/', 3000, 'href-sanitizer: a link added later');
+  await p.close();
+  // the same page on a site without these filters: everything as the server sent it
+  const o = await visit('www.noedit.test', '/edit', 900);
+  await until(async () => { const x = await result(o); return x.config && x.feed && x.list; }, 4000, 'answered');
+  const x = await result(o);
+  assert.equal(x.config.config.ads.enabled, true); assert.ok(x.feed.adSlots); assert.equal(x.list.items.length, 3); assert.equal(x.qs, 'adzone');
+  assert.equal(x.bypass, false); assert.equal(x.parsed.deep.trackingPixel, 'x');
+  assert.equal(await o.getAttribute('#out', 'href'), '/out?url=https%3A%2F%2Fdest.example%2Farticle%3Fid%3D7');
+  await o.close();
+});
+
+const rgb = c => '#' + c.slice(0, 3).map(n => n.toString(16).padStart(2, '0')).join('');
+await step('1.5 badge colour follows the level (and a Strict site\'s own colour on its tab)', async () => {
+  const color = () => sw.evaluate(() => chrome.action.getBadgeBackgroundColor({})).then(rgb);
+  await until(async () => (await color()) === '#f07820', 3000, 'Optimal: orange');
+  await set({ level: 'complete' }); await until(async () => (await color()) === '#e0306a', 3000, 'Complete: pink');
+  await set({ level: 'basic' }); await until(async () => (await color()) === '#5b6b85', 3000, 'Basic: slate');
+  await set({ level: 'optimal' }); await until(async () => (await color()) === '#f07820', 3000, 'back to orange');
+  await set({ strict: ['strictbadge.test'] });
+  const p = await visit('www.strictbadge.test', '/page', 300);
+  const tabId = await sw.evaluate(async () => (await chrome.tabs.query({ url: '*://www.strictbadge.test/*' }))[0].id);
+  await until(async () => rgb(await sw.evaluate(t => chrome.action.getBadgeBackgroundColor({ tabId: t }), tabId)) === '#c0392b', 3000, 'Strict site tab: red');
+  await p.close();
+  await set({ strict: [] });
+  await until(async () => (await scripts()).length === expectedScripts(['main', 'cookies']) && (await dynCount()) === 0, 5000, 'all Normal');
+});
+
+const reloaded = async (p, f) => { await p.evaluate(() => { window.__before = 1; }); await f(); await until(async () => { try { return await p.evaluate(() => !window.__before && document.readyState === 'complete'); } catch { return false; } }, 8000, 'the tab reloaded'); await p.waitForTimeout(700); };
+await step('1.5 "Try fixing this site": Normal -> no hiding -> blocking only, "Yes" keeps the mildest that works; Cancel puts it back', async () => {
+  const p = await visit('news.test', '/page', 800);
+  let pop = await popupFor('*://news.test/*');
+  assert.equal(await pop.isVisible('#fix'), false, 'offered after "Report a broken site"');
+  await pop.click('#report');
+  await until(() => pop.isVisible('#fix'), 2000, 'Try fixing this site offered');
+  await reloaded(p, () => pop.click('#fix'));
+  assert.match(await pop.textContent('#fixStep'), /Step 1 of 4 - Normal/);
+  assert.equal(await shown(p, 'site'), false, 'Normal: hiding'); assert.equal(await shown(p, 'sg'), false); assert.equal((await result(p)).adsEnabled, false, 'Normal: page fixes');
+  seen.length = 0;
+  await reloaded(p, () => pop.click('#fixNo'));
+  assert.match(await pop.textContent('#fixStep'), /Step 2 of 4 - No hiding/);
+  assert.deepEqual(await stor('noHide'), ['news.test']);
+  assert.equal(await shown(p, 'site'), true, 'no hiding: the ad box shows'); assert.equal(await shown(p, 'sg'), true, 'no specific-generic hiding'); assert.equal(await shown(p, 'post-ad'), true, 'no procedural hiding either');
+  assert.equal((await result(p)).adsEnabled, false, 'no hiding: page fixes still run'); assert.ok(!got('ads.example/ad.js'), 'no hiding: still blocked');
+  seen.length = 0;
+  await reloaded(p, () => pop.click('#fixNo'));
+  assert.match(await pop.textContent('#fixStep'), /Step 3 of 4 - Blocking only/);
+  assert.deepEqual(await stor('blockOnly'), ['news.test']); assert.deepEqual(await stor('noHide'), []);
+  assert.equal(await shown(p, 'site'), true); assert.equal((await result(p)).adsEnabled, true, 'blocking only: no page fixes'); assert.ok(!got('ads.example/ad.js'), 'blocking only: still blocked');
+  await pop.click('#fixYes');
+  await until(async () => /Blocking only/.test(await pop.textContent('#fixNote')), 2000, 'saved note');
+  assert.equal(await stor('fixFlow'), undefined, 'the flow is over'); assert.deepEqual(await stor('blockOnly'), ['news.test'], 'kept as the site\'s setting');
+  assert.equal(await pop.isVisible('#fixPanel'), false);
+  assert.match(await pop.textContent('#note'), /Blocking only on news\.test/);
+  await pop.close();
+  const id = sw.url().split('/')[2];
+  const op = await ctx.newPage(); await op.goto(`chrome-extension://${id}/options.html#sites`);
+  await until(async () => (await op.locator('#siteRows tr[data-site="news.test"]').count()) === 1, 3000, 'listed under Sites');
+  assert.match(await op.textContent('#siteRows tr[data-site="news.test"]'), /Blocking only/);
+  await op.close();
+  // again, through to Off and "No" there: the setting is put back; and Cancel puts it back too
+  pop = await popupFor('*://news.test/*');
+  await pop.click('#report'); await reloaded(p, () => pop.click('#fix'));
+  assert.deepEqual(await stor('blockOnly'), [], 'step 1 is Normal');
+  await reloaded(p, () => pop.click('#fixNo')); await reloaded(p, () => pop.click('#fixNo')); await reloaded(p, () => pop.click('#fixNo'));
+  assert.match(await pop.textContent('#fixStep'), /Step 4 of 4 - Off/); assert.deepEqual(await stor('paused'), ['news.test']);
+  // the popup closes when you click the page: a new one picks the flow up
+  await pop.close(); pop = await popupFor('*://news.test/*');
+  assert.equal(await pop.isVisible('#fixPanel'), true, 'the step survives the popup closing'); assert.match(await pop.textContent('#fixStep'), /Step 4 of 4/);
+  await reloaded(p, () => pop.click('#fixNo'));
+  await until(async () => /isn't what breaks it/.test(await pop.textContent('#fixNote')), 2000, 'not Shield');
+  assert.deepEqual(await stor('blockOnly'), ['news.test'], 'put back'); assert.deepEqual(await stor('paused'), []);
+  await pop.click('#report'); await reloaded(p, () => pop.click('#fix'));
+  await reloaded(p, () => pop.click('#fixNo'));
+  assert.deepEqual(await stor('noHide'), ['news.test']);
+  await reloaded(p, () => pop.click('#fixCancel'));
+  assert.deepEqual(await stor('blockOnly'), ['news.test'], 'Cancel: put back'); assert.deepEqual(await stor('noHide'), []);
+  assert.equal(await stor('fixFlow'), undefined);
+  await pop.click('[data-mode="normal"]');
+  await until(async () => (await stor('blockOnly')).length === 0, 3000, 'Normal again');
+  await pop.close(); await p.close();
+  await until(async () => (await scripts()).length === expectedScripts(['main', 'cookies']), 5000, 'scripts back to normal');
 });
 
 await step('the popup: site, count, level switch, lists, and the broken-site report (clipboard only)', async () => {

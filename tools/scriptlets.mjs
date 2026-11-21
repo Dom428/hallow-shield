@@ -510,6 +510,413 @@ function noevalIf(needle) {
   window.eval = new Proxy(window.eval, { apply(t, self, args) { if (test(String(args[0]))) return undefined; return Reflect.apply(t, self, args); } });
 }
 
+// ---------- 1.5: JSON editing (uBO's documented JSONPath-like syntax), argument replacement, link cleaning ----------
+
+// a uBO-style JSONPath edit, compiled once: returns edit(obj) -> true if obj changed, or null if the query can't be used.
+//   path               remove what the path matches (every list)
+//   path=value         set it to a JSON value; path+={...} add properties to the matched objects;
+//   path=repl({"pattern"|"regex": "...", "replacement": "..."})  replace inside matched strings (trusted lists only)
+//   a{1,};b            sub-queries: run b only if a matches (quantifiers {x} {x,} {,y} {x,y}; default {1,})
+// Paths: "$" / "@" root, ".name", "..name" (anywhere below), ".*" / "[*]", "[2]" / "[-1]", "['a','b']", "./re/" or
+// "[/re/]" (keys matching a regex), "[?filter]". A filter is "@.path OP value" (RFC style: tests the children) or
+// ".path OP value" (uBO's older style: tests array elements, or the object itself); OP is == != < <= > >= ^= $= *=
+// or =/regex/; without OP the path just has to exist. "v2:" in front is accepted and changes nothing here.
+function shieldJsonEdit(raw, trusted) {
+  let q = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (q.startsWith('v2:')) q = q.slice(3).trim();
+  if (!q) return null;
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  // walk s from i, calling at(i, ch) for characters at bracket depth 0 outside quotes and regex literals
+  const scan = (s, at, from = 0) => {
+    let depth = 0, quote = '', re = false;
+    for (let i = from; i < s.length; i++) {
+      const ch = s[i];
+      if (quote || re) { if (ch === '\\') { i++; continue; } if ((quote && ch === quote) || (re && ch === '/')) { quote = ''; re = false; } continue; }
+      if (ch === '"' || ch === "'") { quote = ch; continue; }
+      if (ch === '/' && (i === from || /[.[=(,]/.test(s[i - 1]))) { re = true; continue; }
+      if (ch === '[' || ch === '(' || ch === '{') { depth++; if (depth === 1 && at(i, ch, true)) return i; continue; }
+      if (ch === ']' || ch === ')' || ch === '}') { depth--; if (depth === 0 && at(i, ch, true)) return i; continue; }
+      if (depth === 0 && at(i, ch, false)) return i;
+    }
+    return -1;
+  };
+  const closeOf = (s, i) => { let d = 0; return scan(s, (j, ch, br) => { if (!br) return false; d += ch === '[' || ch === '(' || ch === '{' ? 1 : -1; return d === 0; }, i); };
+  const regexOf = s => { const m = /^\/((?:\\.|[^\\/])+)\/([dimsuy]*)$/.exec(s); if (!m) return null; try { return new RegExp(m[1], m[2]); } catch (e) { return null; } };
+  const literal = s => {
+    s = s.trim();
+    if (/^'.*'$/s.test(s)) return s.slice(1, -1);
+    try { return JSON.parse(s); } catch (e) { return s; }
+  };
+  const split = (s, sep) => { const out = []; let last = 0; scan(s, (i, ch, br) => { if (!br && ch === sep) { out.push(s.slice(last, i)); last = i + 1; } return false; }); out.push(s.slice(last)); return out; };
+  function filterOf(expr) {
+    expr = expr.trim();
+    if (/^\(.*\)$/s.test(expr)) expr = expr.slice(1, -1).trim();
+    const rfc = expr.startsWith('@');
+    let op = '', at = -1;
+    scan(expr, (i, ch, br) => {
+      if (br) return false;
+      const two = expr.substr(i, 2);
+      if (['==', '!=', '<=', '>=', '^=', '$='].includes(two)) { op = two; at = i; return true; }
+      if (two === '*=' && expr[i + 2] !== '=') { op = two; at = i; return true; }
+      if (ch === '<' || ch === '>') { op = ch; at = i; return true; }
+      if (ch === '=' && expr[i + 1] === '/') { op = '=/'; at = i; return true; }
+      return false;
+    });
+    const left = op ? expr.slice(0, at) : expr;
+    const segs = pathOf(left.trim().replace(/^@/, ''), true);
+    if (!segs) return null;
+    let test;
+    if (!op) test = () => true;
+    else {
+      const rhs = expr.slice(at + (op === '=/' ? 1 : op.length)).trim();
+      if (op === '=/') { const re = regexOf(rhs); if (!re) return null; test = v => typeof v === 'string' && re.test(v); }
+      else {
+        const want = literal(rhs);
+        test = {
+          '==': v => v === want || (typeof v === 'object' && v !== null && JSON.stringify(v) === JSON.stringify(want)),
+          '!=': v => !(v === want || (typeof v === 'object' && v !== null && JSON.stringify(v) === JSON.stringify(want))),
+          '<': v => typeof v === typeof want && v < want, '<=': v => typeof v === typeof want && v <= want,
+          '>': v => typeof v === typeof want && v > want, '>=': v => typeof v === typeof want && v >= want,
+          '^=': v => typeof v === 'string' && v.startsWith(String(want)), '$=': v => typeof v === 'string' && v.endsWith(String(want)),
+          '*=': v => typeof v === 'string' && v.includes(String(want)),
+        }[op];
+      }
+    }
+    return { t: 'filter', rfc, test: node => { const box = { r: node }; return select(segs, [box, 'r']).some(([o, k]) => test(o[k])); } };
+  }
+  function bracketOf(inner) {
+    const s = inner.trim();
+    if (s === '*') return { t: 'any' };
+    if (/^-?\d+$/.test(s)) return { t: 'index', i: parseInt(s, 10) };
+    if (s.startsWith('?')) return filterOf(s.slice(1));
+    if (s.startsWith('/')) { const re = regexOf(s); return re ? { t: 're', re } : null; }
+    const ks = split(s, ',').map(x => x.trim());
+    if (!ks.length || !ks.every(k => /^(["']).*\1$/s.test(k))) return null;
+    return { t: 'names', ks: ks.map(k => k[0] === '"' ? (() => { try { return JSON.parse(k); } catch (e) { return k.slice(1, -1); } })() : k.slice(1, -1)) };
+  }
+  function pathOf(p) {
+    const segs = []; let i = 0;
+    if (p[0] === '$' || p[0] === '@') i = 1;
+    while (i < p.length) {
+      let deep = false;
+      if (p.startsWith('..', i)) { deep = true; i += 2; }
+      else if (p[i] === '.') i++;
+      else if (p[i] !== '[' && i !== 0) return null;
+      if (i >= p.length) return null;
+      const ch = p[i];
+      if (ch === '[') {
+        const j = closeOf(p, i); if (j < 0) return null;
+        const seg = bracketOf(p.slice(i + 1, j)); if (!seg) return null;
+        seg.deep = deep; segs.push(seg); i = j + 1; continue;
+      }
+      if (ch === '*') { segs.push({ t: 'any', deep }); i++; continue; }
+      if (ch === '/') {
+        const m = /^\/((?:\\.|[^\\/])+)\/([dimsuy]*)/.exec(p.slice(i)); if (!m) return null;
+        const re = regexOf(m[0]); if (!re) return null;
+        segs.push({ t: 're', re, deep }); i += m[0].length; continue;
+      }
+      const m = /^[^.[\]]+/.exec(p.slice(i)); if (!m) return null;
+      segs.push({ t: 'name', k: m[0], deep }); i += m[0].length;
+    }
+    return segs;
+  }
+  // refs are [parent, key]; the root is [{ r: root }, 'r']
+  function descend(ref, out, seen) {
+    const v = ref[0][ref[1]];
+    if (v === null || typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    for (const k of Object.keys(v)) { const r = [v, k]; out.push(r); descend(r, out, seen); }
+  }
+  function select(segs, rootRef, create) {
+    let cur = [rootRef];
+    for (let n = 0; n < segs.length && cur.length; n++) {
+      const s = segs[n], last = n === segs.length - 1, next = [], dupe = new Map();
+      const add = r => { let ks = dupe.get(r[0]); if (!ks) dupe.set(r[0], ks = new Set()); if (!ks.has(r[1])) { ks.add(r[1]); next.push(r); } };
+      for (const ref of cur) {
+        const cands = [ref]; if (s.deep) descend(ref, cands, new Set());
+        for (const c of cands) {
+          const v = c[0][c[1]];
+          if (v === null || typeof v !== 'object') continue;
+          if (s.t === 'name') { if (own(v, s.k) || (create && last && !s.deep && !Array.isArray(v))) add([v, s.k]); }
+          else if (s.t === 'names') { for (const k of s.ks) if (own(v, k)) add([v, k]); }
+          else if (s.t === 'any') { for (const k of Object.keys(v)) add([v, k]); }
+          else if (s.t === 'index') { if (Array.isArray(v)) { const i = s.i < 0 ? v.length + s.i : s.i; if (i >= 0 && i < v.length) add([v, String(i)]); } }
+          else if (s.t === 're') { for (const k of Object.keys(v)) if (s.re.test(k)) add([v, k]); }
+          else if (s.t === 'filter') {
+            if (Array.isArray(v) || s.rfc) { for (const k of Object.keys(v)) if (s.test(v[k])) add([v, k]); }
+            else if (s.test(v)) add(c);
+          }
+        }
+      }
+      cur = next;
+    }
+    return cur;
+  }
+  // the parts: conditions (with quantifiers), then the final query with its operation
+  const parts = split(q, ';').map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  const conds = [];
+  for (const part of parts.slice(0, -1)) {
+    const m = /\{(\d*)(,?)(\d*)\}$/.exec(part);
+    let min = 1, max = Infinity, body = part;
+    if (m) { body = part.slice(0, m.index); min = m[1] === '' ? 0 : +m[1]; max = m[2] ? (m[3] === '' ? Infinity : +m[3]) : (m[1] === '' ? Infinity : +m[1]); }
+    const segs = pathOf(body.trim(), false); if (!segs) return null;
+    conds.push({ segs, min, max });
+  }
+  const fin = parts[parts.length - 1];
+  const eq = scan(fin, (i, ch, br) => !br && ch === '=');
+  let pathText = fin, op = '', value;
+  if (eq >= 0) {
+    if (!trusted) return null;   // only trusted lists may change values
+    const plus = fin[eq - 1] === '+';
+    pathText = fin.slice(0, plus ? eq - 1 : eq);
+    const vs = fin.slice(eq + 1).trim();
+    if (plus) { op = '+='; try { value = JSON.parse(vs); } catch (e) { return null; } if (value === null || typeof value !== 'object' || Array.isArray(value)) return null; }
+    else if (/^repl\(.*\)$/s.test(vs)) {
+      let o; try { o = JSON.parse(vs.slice(5, -1)); } catch (e) { return null; }
+      if (!o || typeof o !== 'object') return null;
+      let re; try { re = o.regex !== undefined ? new RegExp(o.regex, o.flags || '') : new RegExp(String(o.pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); } catch (e) { return null; }
+      op = 'repl'; value = [re, String(o.replacement === undefined ? '' : o.replacement)];
+    } else if (/^call\(/.test(vs)) return null;   // calling page functions: not supported
+    else { op = '='; try { value = JSON.stringify(JSON.parse(vs)); } catch (e) { value = JSON.stringify(vs); } }
+  }
+  const segs = pathOf(pathText.trim(), false);
+  if (!segs || !segs.length) return null;
+  return root => {
+    if (root === null || typeof root !== 'object') return false;
+    const box = { r: root }, rootRef = [box, 'r'];
+    for (const c of conds) { const n = select(c.segs, rootRef).length; if (n < c.min || n > c.max) return false; }
+    const refs = select(segs, rootRef, op === '=').filter(r => r[0] !== box);
+    if (!refs.length) return false;
+    let changed = false;
+    if (!op) {
+      // remove: array elements from the end, so the indexes stay right
+      const arrays = new Map();
+      for (const [o, k] of refs) { if (Array.isArray(o)) { if (!arrays.has(o)) arrays.set(o, []); arrays.get(o).push(+k); } else if (own(o, k)) { delete o[k]; changed = true; } }
+      for (const [a, ks] of arrays) for (const k of [...new Set(ks)].sort((x, y) => y - x)) { a.splice(k, 1); changed = true; }
+      return changed;
+    }
+    for (const [o, k] of refs) {
+      if (op === '=') { o[k] = JSON.parse(value); changed = true; }
+      else if (op === '+=') { const t = o[k]; if (t !== null && typeof t === 'object' && !Array.isArray(t)) { Object.assign(t, JSON.parse(JSON.stringify(value))); changed = true; } }
+      else if (op === 'repl') { if (typeof o[k] === 'string') { const nv = o[k].replace(value[0], value[1]); if (nv !== o[k]) { o[k] = nv; changed = true; } } }
+    }
+    return changed;
+  };
+}
+// the arguments after the query: "propsToMatch, value" pairs, or the propsToMatch value on its own first
+function shieldEditArgs(rest) {
+  const a = rest.filter(x => x !== '' && x !== undefined && x !== null), o = {};
+  let i = 0;
+  if (a.length % 2 === 1) { o.propsToMatch = a[0]; i = 1; }
+  for (; i + 1 < a.length; i += 2) o[a[i]] = a[i + 1];
+  return o;
+}
+// text -> edited text (JSON, or JSON lines), undefined when nothing changed
+function shieldJsonText(edit, lines) {
+  const one = t => { let o; try { o = JSON.parse(t); } catch (e) { return undefined; } return edit(o) ? JSON.stringify(o) : undefined; };
+  if (!lines) return one;
+  return text => { let changed = false; const out = text.split('\n').map(l => { if (!l.trim()) return l; const n = one(l); if (n === undefined) return l; changed = true; return n; }); return changed ? out.join('\n') : undefined; };
+}
+// replace the function at a property chain ("JSON.stringify", "Element.prototype.append", "matchMedia.call") with
+// wrap(original); if it doesn't exist yet, it is wrapped when the page creates it
+function shieldWrapFn(chain, wrap) {
+  const links = String(chain).replace(/^window\./, '').split('.');
+  let owner = window;
+  for (let i = 0; i < links.length - 1 && owner; i++) { try { owner = owner[links[i]]; } catch (e) { owner = null; } }
+  const prop = links[links.length - 1];
+  let cur; try { cur = owner ? owner[prop] : undefined; } catch (e) { }
+  if (typeof cur === 'function') {
+    let d; try { d = Object.getOwnPropertyDescriptor(owner, prop); } catch (e) { }
+    const w = wrap(cur);
+    try { Object.defineProperty(owner, prop, { value: w, writable: true, configurable: true, enumerable: d ? !!d.enumerable : false }); } catch (e) { try { owner[prop] = w; } catch (e2) { } }
+    return;
+  }
+  shieldTrap(chain, (o, p) => { let f; try { f = o[p]; } catch (e) { } if (typeof f === 'function') f = wrap(f); return { get() { return f; }, set(v) { f = typeof v === 'function' ? wrap(v) : v; } }; });
+}
+function shieldJsonEditParse(query, rest, trusted) {
+  const edit = shieldJsonEdit(query, trusted); if (!edit) return;
+  const extra = shieldEditArgs(rest), m = extra.matches ? shieldNeedle(extra.matches) : null;
+  JSON.parse = new Proxy(JSON.parse, { apply(t, self, args) { const v = Reflect.apply(t, self, args); try { if (!m || m(String(args[0]))) edit(v); } catch (e) { } return v; } });
+}
+function shieldJsonEditResponse(kind, query, rest, trusted, lines) {
+  const edit = shieldJsonEdit(query, trusted); if (!edit) return;
+  const match = shieldReqMatch(shieldEditArgs(rest).propsToMatch), text = shieldJsonText(edit, lines);
+  if (kind === 'fetch') shieldFetchHook(match, text); else shieldXhrHook(match, text);
+}
+function shieldJsonEditRequest(kind, query, rest, trusted) {
+  const edit = shieldJsonEdit(query, trusted); if (!edit) return;
+  const match = shieldReqMatch(shieldEditArgs(rest).propsToMatch), text = shieldJsonText(edit, false);
+  if (kind === 'fetch') {
+    if (typeof window.fetch !== 'function') return;
+    window.fetch = new Proxy(window.fetch, {
+      apply(t, self, args) {
+        try {
+          const init = args[1];
+          if (init && typeof init === 'object' && typeof init.body === 'string' && match(shieldFetchDetails(args))) {
+            const out = text(init.body);
+            if (out !== undefined) args = [args[0], Object.assign({}, init, { body: out })];
+          }
+        } catch (e) { }
+        return Reflect.apply(t, self, args);
+      },
+    });
+    return;
+  }
+  const X = XMLHttpRequest.prototype, on = new WeakMap();
+  X.open = new Proxy(X.open, { apply(t, xhr, args) { try { on.set(xhr, match({ url: new URL(String(args[1]), location.href).href, method: String(args[0] || 'GET').toUpperCase() })); } catch (e) { } return Reflect.apply(t, xhr, args); } });
+  X.send = new Proxy(X.send, { apply(t, xhr, args) { try { if (on.get(xhr) && typeof args[0] === 'string') { const out = text(args[0]); if (out !== undefined) args = [out]; } } catch (e) { } return Reflect.apply(t, xhr, args); } });
+}
+// edit-inbound-object: the object passed as one argument is edited (a copy, so the page's own object stays as it was)
+function shieldEditInbound(chain, pos, query, trusted) {
+  const edit = shieldJsonEdit(query, trusted), n = parseInt(pos, 10);
+  if (!chain || !edit || isNaN(n)) return;
+  const str = JSON.stringify, parse = JSON.parse;
+  shieldWrapFn(chain, fn => new Proxy(fn, {
+    apply(t, self, args) {
+      const i = n < 0 ? args.length + n : n, v = args[i];
+      if (i >= 0 && v !== null && typeof v === 'object') {
+        try { const c = Reflect.apply(parse, JSON, [Reflect.apply(str, JSON, [v])]); if (edit(c)) { args = Array.from(args); args[i] = c; } } catch (e) { }
+      }
+      return Reflect.apply(t, self, args);
+    },
+  }));
+}
+// edit-outbound-object: what the function returns is edited (also when it's a promise)
+function shieldEditOutbound(chain, query, trusted) {
+  const edit = shieldJsonEdit(query, trusted);
+  if (!chain || !edit) return;
+  shieldWrapFn(chain, fn => new Proxy(fn, {
+    apply(t, self, args) {
+      const r = Reflect.apply(t, self, args);
+      try { if (r instanceof Promise) return r.then(v => { try { edit(v); } catch (e) { } return v; }); edit(r); } catch (e) { }
+      return r;
+    },
+  }));
+}
+function jsonEdit(query, ...rest) { shieldJsonEditParse(query, rest, false); }
+function trustedJsonEdit(query, ...rest) { shieldJsonEditParse(query, rest, true); }
+function jsonEditFetchResponse(query, ...rest) { shieldJsonEditResponse('fetch', query, rest, false, false); }
+function trustedJsonEditFetchResponse(query, ...rest) { shieldJsonEditResponse('fetch', query, rest, true, false); }
+function jsonEditXhrResponse(query, ...rest) { shieldJsonEditResponse('xhr', query, rest, false, false); }
+function trustedJsonEditXhrResponse(query, ...rest) { shieldJsonEditResponse('xhr', query, rest, true, false); }
+function jsonlEditFetchResponse(query, ...rest) { shieldJsonEditResponse('fetch', query, rest, false, true); }
+function trustedJsonlEditFetchResponse(query, ...rest) { shieldJsonEditResponse('fetch', query, rest, true, true); }
+function jsonlEditXhrResponse(query, ...rest) { shieldJsonEditResponse('xhr', query, rest, false, true); }
+function trustedJsonlEditXhrResponse(query, ...rest) { shieldJsonEditResponse('xhr', query, rest, true, true); }
+function jsonEditFetchRequest(query, ...rest) { shieldJsonEditRequest('fetch', query, rest, false); }
+function trustedJsonEditFetchRequest(query, ...rest) { shieldJsonEditRequest('fetch', query, rest, true); }
+function jsonEditXhrRequest(query, ...rest) { shieldJsonEditRequest('xhr', query, rest, false); }
+function trustedJsonEditXhrRequest(query, ...rest) { shieldJsonEditRequest('xhr', query, rest, true); }
+function editInboundObject(chain, pos, query) { shieldEditInbound(chain, pos, query, false); }
+function trustedEditInboundObject(chain, pos, query) { shieldEditInbound(chain, pos, query, true); }
+function editOutboundObject(chain, query) { shieldEditOutbound(chain, query, false); }
+function trustedEditOutboundObject(chain, query) { shieldEditOutbound(chain, query, true); }
+
+// trusted-replace-argument: when the function is called (or constructed), one argument - or "this" - is replaced by a
+// fixed value (set-constant's names, a number, "json:<JSON>") or edited with "repl:/regex/replacement/flags", only when
+// "condition" (if given) matches the argument
+function trustedReplaceArgument(chain, rawPos, rawValue, ...rest) {
+  if (!chain || rawPos === undefined || rawPos === '') return;
+  const isThis = rawPos === 'this', n = parseInt(rawPos, 10);
+  if (!isThis && isNaN(n)) return;
+  const raw = String(rawValue === undefined ? '' : rawValue);
+  let make;
+  const rm = /^repl:\/((?:\\.|[^\\/])*)\/((?:\\.|[^\\/])*)\/([dgimsuy]*)$/s.exec(raw);
+  if (rm) { let re; try { re = new RegExp(rm[1], rm[3]); } catch (e) { return; } const rep = rm[2].replace(/\\\//g, '/'); make = old => String(old).replace(re, rep); }
+  else if (raw.startsWith('repl:')) return;
+  else {
+    let v;
+    if (raw.startsWith('json:')) { try { v = JSON.parse(raw.slice(5)); } catch (e) { return; } }
+    else { const c = shieldConst(raw, false); v = c[0] ? c[1] : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw; }
+    make = () => v;
+  }
+  const extra = shieldExtra(rest), cond = extra.condition !== undefined && extra.condition !== '' ? shieldNeedle(extra.condition) : null;
+  const swap = (self, args) => {
+    if (isThis) return cond && !cond(self) ? [self, args] : [make(self), args];
+    const i = n < 0 ? args.length + n : n;
+    if (i < 0 || (cond && !cond(args[i]))) return [self, args];
+    const a = Array.from(args); a[i] = make(a[i]); return [self, a];
+  };
+  shieldWrapFn(chain, fn => new Proxy(fn, {
+    apply(t, self, args) { let r = [self, args]; try { r = swap(self, args); } catch (e) { } return Reflect.apply(t, r[0], r[1]); },
+    construct(t, args, nt) { let a = args; try { if (!isThis) a = swap(undefined, args)[1]; } catch (e) { } return Reflect.construct(t, a, nt); },
+  }));
+}
+
+// href-sanitizer: links that go through a redirect/tracking address get the real destination as their href. The
+// destination is the link's text (no tokens), an attribute ("[title]") or taken from the href with uBO's urlskip steps:
+// "?name" (a query parameter), "&1" (the name of the first parameter), "#" (the hash), "/regex/" (its first group),
+// "+https", "-base64", "-safebase64", "-uricomponent". Only an http(s) address is ever written.
+function hrefSanitizer(selector, source) {
+  if (!selector) return;
+  const steps = String(source || '').trim().split(/\s+/).filter(Boolean);
+  const b64 = (s, safe) => { let t = safe ? s.replace(/-/g, '+').replace(/_/g, '/') : s; while (t.length % 4) t += '='; return atob(t); };
+  const target = el => {
+    let s = null, i = 0;
+    if (!steps.length) s = (el.textContent || '').trim();
+    else if (/^\[.+\]$/.test(steps[0])) { s = el.getAttribute(steps[0].slice(1, -1)); i = 1; }
+    else s = el.href;
+    for (; i < steps.length && s; i++) {
+      const st = steps[i];
+      try {
+        if (st[0] === '?') s = new URL(s, location.href).searchParams.get(st.slice(1));
+        else if (/^&\d+$/.test(st)) { const ks = [...new URL(s, location.href).searchParams.keys()]; s = ks[parseInt(st.slice(1), 10) - 1] || null; }
+        else if (st === '#') { const h = new URL(s, location.href).hash; s = h ? h.slice(1) : null; }
+        else if (/^\/.+\/[a-z]*$/.test(st)) { const m = shieldRe(st).exec(s); s = m && m[1] !== undefined ? m[1] : null; }
+        else if (st === '+https') s = /^https?:\/\//i.test(s) ? s.replace(/^http:/i, 'https:') : 'https://' + s.replace(/^\/\//, '');
+        else if (st === '-base64' || st === '-safebase64') s = b64(s, st === '-safebase64');
+        else if (st === '-uricomponent') s = decodeURIComponent(s);
+        else if (st !== '-blocked') s = null;
+      } catch (e) { s = null; }
+    }
+    if (!s) return null;
+    try { const u = new URL(s); return /^https?:$/.test(u.protocol) ? u.href : null; } catch (e) { return null; }
+  };
+  shieldWhen('stay', () => {
+    let els; try { els = document.querySelectorAll(selector); } catch (e) { return; }
+    for (const el of els) {
+      if (!el.hasAttribute('href')) continue;
+      const u = target(el);
+      if (u && u !== el.href) el.setAttribute('href', u);
+    }
+  }, ['href']);
+}
+
+// trusted-prevent-dom-bypass: a page can dodge scriptlets by taking a fresh fetch / open / ... from a blank iframe it
+// just added; after the method adds an element, blank same-origin frames in it hand back the page's own (Shield-checked)
+// targetProp, or the page's own window when no targetProp is given
+function trustedPreventDomBypass(methodPath, targetProp) {
+  if (!methodPath) return;
+  const prop = String(targetProp || '');
+  const fixFrame = f => {
+    try {
+      const w = f.contentWindow; if (!w) return;
+      let href; try { href = w.location.href; } catch (e) { return; }   // another site's frame: not a bypass
+      if (href !== 'about:blank' && href !== 'about:srcdoc') return;
+      if (!prop) { Object.defineProperty(f, 'contentWindow', { value: window, configurable: true }); return; }
+      const links = prop.split('.');
+      let mine = window, theirs = w;
+      for (let i = 0; i < links.length - 1; i++) { mine = mine[links[i]]; theirs = theirs[links[i]]; if (!mine || !theirs) return; }
+      theirs[links[links.length - 1]] = mine[links[links.length - 1]];
+    } catch (e) { }
+  };
+  shieldWrapFn(methodPath, fn => new Proxy(fn, {
+    apply(t, self, args) {
+      const els = [];
+      for (const a of args) { try { if (a instanceof Element) els.push(a); else if (a instanceof DocumentFragment) els.push(...a.children); } catch (e) { } }
+      const r = Reflect.apply(t, self, args);
+      for (const el of els) {
+        try {
+          if (el instanceof HTMLIFrameElement || el instanceof HTMLFrameElement) fixFrame(el);
+          for (const f of el.querySelectorAll('iframe,frame')) fixFrame(f);
+        } catch (e) { }
+      }
+      return r;
+    },
+  }));
+}
+
 // canonical name -> implementation
 export const SCRIPTLETS = {
   'set-constant': setConstant, 'trusted-set-constant': trustedSetConstant,
@@ -527,11 +934,28 @@ export const SCRIPTLETS = {
   'set-attr': setAttr, 'trusted-set-attr': trustedSetAttr, 'trusted-set-cookie': trustedSetCookie,
   'trusted-set-local-storage-item': trustedSetLocalStorageItem, 'trusted-set-session-storage-item': trustedSetSessionStorageItem,
   'window-close-if': windowCloseIf, 'alert-buster': alertBuster,
+  // 1.5
+  'json-edit': jsonEdit, 'trusted-json-edit': trustedJsonEdit,
+  'json-edit-fetch-response': jsonEditFetchResponse, 'trusted-json-edit-fetch-response': trustedJsonEditFetchResponse,
+  'json-edit-xhr-response': jsonEditXhrResponse, 'trusted-json-edit-xhr-response': trustedJsonEditXhrResponse,
+  'jsonl-edit-fetch-response': jsonlEditFetchResponse, 'trusted-jsonl-edit-fetch-response': trustedJsonlEditFetchResponse,
+  'jsonl-edit-xhr-response': jsonlEditXhrResponse, 'trusted-jsonl-edit-xhr-response': trustedJsonlEditXhrResponse,
+  'json-edit-fetch-request': jsonEditFetchRequest, 'trusted-json-edit-fetch-request': trustedJsonEditFetchRequest,
+  'json-edit-xhr-request': jsonEditXhrRequest, 'trusted-json-edit-xhr-request': trustedJsonEditXhrRequest,
+  'edit-inbound-object': editInboundObject, 'trusted-edit-inbound-object': trustedEditInboundObject,
+  'edit-outbound-object': editOutboundObject, 'trusted-edit-outbound-object': trustedEditOutboundObject,
+  'trusted-replace-argument': trustedReplaceArgument, 'href-sanitizer': hrefSanitizer, 'trusted-prevent-dom-bypass': trustedPreventDomBypass,
 };
+const JSON_EDIT = [shieldJsonEdit, shieldEditArgs, shieldJsonText];
+const JSON_EDIT_EXTRA = Object.fromEntries(Object.keys(SCRIPTLETS).filter(n => /json-edit|jsonl-edit/.test(n)).map(n => [n, [...JSON_EDIT, /request/.test(n) ? shieldJsonEditRequest : /response/.test(n) ? shieldJsonEditResponse : shieldJsonEditParse]]));
+const OBJECT_EDIT_EXTRA = Object.fromEntries(Object.keys(SCRIPTLETS).filter(n => /edit-(in|out)bound-object/.test(n)).map(n => [n, [...JSON_EDIT, shieldWrapFn, /inbound/.test(n) ? shieldEditInbound : shieldEditOutbound]]));
 // helpers some scriptlets need on top of HELPERS
 export const EXTRA = { 'trusted-replace-fetch-response': [shieldReplacer], 'trusted-replace-xhr-response': [shieldReplacer],
   'adjust-setTimeout': [shieldAdjust], 'adjust-setInterval': [shieldAdjust], 'set-local-storage-item': [shieldStorage], 'set-session-storage-item': [shieldStorage],
-  'remove-node-text': [shieldNodeText], 'trusted-replace-node-text': [shieldNodeText], 'set-attr': [shieldSetAttr], 'trusted-set-attr': [shieldSetAttr] };
+  'remove-node-text': [shieldNodeText], 'trusted-replace-node-text': [shieldNodeText], 'set-attr': [shieldSetAttr], 'trusted-set-attr': [shieldSetAttr],
+  ...JSON_EDIT_EXTRA, ...OBJECT_EDIT_EXTRA, 'trusted-replace-argument': [shieldWrapFn], 'trusted-prevent-dom-bypass': [shieldWrapFn] };
+// for the unit tests
+export const JSON_EDIT_SOURCE = shieldJsonEdit;
 export const CONSTS = { 'set-cookie': `const SHIELD_SAFE_VALUES = ${JSON.stringify(SHIELD_SAFE_VALUES)};` };
 
 // the runner around a scriptlet: which arguments apply on this page (hostname, its parent domains, "name.*" entities)
@@ -555,3 +979,44 @@ export function bundleMany(parts, title) {
     `\n})();\n`;
 }
 export const bundle = (name, data) => bundleMany({ [name]: data }, name);
+
+// 1.5: the runner of a bundle for many sites. KEYS is "|site=[[filter ids],[exception ids]]|site2=..." - a plain string,
+// which costs the page almost nothing to load - and ARGS (the filters' arguments, a JSON text) is only read on a page
+// whose site is in KEYS. An exception id below 0 turns every filter of that scriptlet off (-1 = the first scriptlet).
+function shieldSites(FNS, KEYS, ARGS) {
+  const p = location.hostname.toLowerCase().split('.'), keys = [];
+  for (let i = 0; i < p.length; i++) keys.push(p.slice(i).join('.'));
+  for (let i = 0; i < p.length - 1; i++) if (p.length - i - 1 <= 2) keys.push(p[i] + '.*');
+  let inc = null; const exc = [];
+  for (const k of keys) {
+    if (!k) continue;
+    const at = KEYS.indexOf('|' + k + '=');
+    if (at < 0) continue;
+    const from = at + k.length + 2, to = KEYS.indexOf('|', from);
+    let v; try { v = JSON.parse(KEYS.slice(from, to < 0 ? KEYS.length : to)); } catch (e) { continue; }
+    if (!inc) inc = new Set();
+    for (const id of v[0]) inc.add(id);
+    for (const x of v[1]) exc.push(x);
+  }
+  if (!inc || !inc.size) return;
+  const table = JSON.parse(ARGS);
+  for (const x of exc) { if (x >= 0) inc.delete(x); else for (const id of [...inc]) if (table[id][0] === -x - 1) inc.delete(id); }
+  for (const id of [...inc].sort((a, c) => a - c)) { const [n, a] = table[id]; try { FNS[n](...a); } catch (e) { } }
+}
+// one bundle (a classic script) for the sites of several scriptlets: parts = { name: { args, hosts, exc } }
+export function bundleSites(parts, title) {
+  const names = Object.keys(parts), table = [], idOf = new Map(), keys = new Map();
+  names.forEach((n, ni) => parts[n].args.forEach((a, i) => { idOf.set(n + ' ' + i, table.length); table.push([ni, a]); }));
+  const entry = k => { if (!keys.has(k)) keys.set(k, [[], []]); return keys.get(k); };
+  names.forEach((n, ni) => {
+    for (const [k, l] of Object.entries(parts[n].hosts)) for (const i of l) entry(k)[0].push(idOf.get(n + ' ' + i));
+    for (const [k, l] of Object.entries(parts[n].exc)) for (const i of l) entry(k)[1].push(i < 0 ? -(ni + 1) : idOf.get(n + ' ' + i));
+  });
+  const K = [...keys].map(([k, v]) => '|' + k + '=' + JSON.stringify(v)).join('') + '|';
+  const helpers = [...new Set([...HELPERS, ...names.flatMap(n => EXTRA[n] || [])])].map(h => h.toString()).join('\n');
+  const consts = [...new Set(names.map(n => CONSTS[n]).filter(Boolean))].join('\n');
+  return `// Hallow Shield scriptlets (${title}) - generated by tools/build.mjs from the filter lists; runs in the page (MAIN world).\n` +
+    `(function () {\n'use strict';\n${consts}\n${helpers}\n${shieldSites.toString()}\n` +
+    names.map(n => SCRIPTLETS[n].toString()).join('\n') +
+    `\nshieldSites([${names.map(n => SCRIPTLETS[n].name).join(', ')}], ${JSON.stringify(K)}, ${JSON.stringify(JSON.stringify(table))});\n})();\n`;
+}

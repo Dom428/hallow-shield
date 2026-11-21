@@ -10,9 +10,11 @@
 //     annoyance lists' rules as dynamic rules limited to pages of those sites); Off is the same as Pause
 //   - "Handle cookie banners": the cookie list's "click Reject" jobs for a site, handed to content.js / clicker.js
 //   - stats (options page): what the browser says it blocked, per day, kept in storage.local only
-import { cosmeticKeys, shardOf, onList, siteCosmetics, pauseRule, PAUSE_BASE, USER_BASE, USER_MAX, USER_REGEX_MAX, STRICT_BASE, STRICT_MAX, patternsFor, wantedRulesets, groupOn, siteOf, siteModeOf, strictRule, validDomain, LEVELS, DEFAULT_LEVEL } from './shared.js';
+//   - 1.5: sites left on "No hiding" / "Blocking only" by "Try fixing this site" (popup), the badge colour (follows the
+//     level, or the site's own mode), and procedural.js / clicker.js injected only into frames that need them
+import { cosmeticKeys, shardOf, onList, siteCosmetics, pauseRule, PAUSE_BASE, USER_BASE, USER_MAX, USER_REGEX_MAX, STRICT_BASE, STRICT_MAX, patternsFor, wantedRulesets, groupOn, siteOf, siteModeOf, withSiteMode, strictRule, validDomain, badgeColor, MODE_KEYS, LEVELS, DEFAULT_LEVEL } from './shared.js';
 import { compileUserFilters, zapLine } from './userfilters.js';
-import { emptyStats, addBlock, addClick, prune, summary, categoryOf, domainOfRule, hostOf } from './stats.js';
+import { emptyStats, addBlock, addClick, prune, summary, categoryOf, domainOfRule, hostOf, clicksOn } from './stats.js';
 
 const ext = globalThis.browser ?? chrome;
 const dnr = ext.declarativeNetRequest;
@@ -38,7 +40,7 @@ const shard = (g, n) => { const k = g + n; if (!shards.has(k)) shards.set(k, jso
 const LIST_IDS = ['ublock-filters', 'easylist', 'easyprivacy', 'ublock-badware', 'ublock-privacy', 'ublock-unbreak', 'ublock-quick-fixes', 'plowe', 'ublock-cookies', 'easylist-cookies', 'ublock-annoyances', 'fanboy-annoyances', 'fanboy-social'];
 
 async function settings() {
-  const s = await ext.storage.local.get({ paused: [], strict: [], level: null, lists: {}, cookies: true, annoyances: false, myFilters: '', ads: true, privacy: true, hide: true, debugNoRoom: [] });
+  const s = await ext.storage.local.get({ paused: [], strict: [], noHide: [], blockOnly: [], level: null, lists: {}, cookies: true, annoyances: false, myFilters: '', ads: true, privacy: true, hide: true, debugNoRoom: [] });
   if (!LEVELS.includes(s.level)) {
     // settings from Shield 1.0: three switches
     s.level = s.hide === false ? 'basic' : DEFAULT_LEVEL;
@@ -58,6 +60,8 @@ const activeGroups = (s, m) => ['main', ...Object.entries(m.groups || {}).filter
 const strictGroups = (s, m) => [...new Set([...activeGroups(s, m), ...((m.groups?.annoyances?.lists || []).some(id => s.lists?.[id] !== false) ? ['annoyances'] : [])])];
 // the groups that apply on one site (none at Basic, unless the site is Strict)
 const groupsFor = (s, m, host) => siteModeOf(s, host) === 'strict' ? strictGroups(s, m) : s.level !== 'basic' ? activeGroups(s, m) : [];
+// 1.5: "No hiding" sites get no hiding (the lists' or yours); "Blocking only" sites nothing in their pages at all
+const sitePats = list => (list || []).filter(validDomain).flatMap(d => [`*://${d}/*`, `*://*.${d}/*`]);
 const strictSites = s => (s.strict || []).filter(d => validDomain(d) && !onList(d, s.paused));
 // My filters, converted once per text
 let userCache = { text: null, out: null };
@@ -163,7 +167,8 @@ async function syncStrict() {
 // ---- content scripts: CSS, the cosmetic script and the scriptlets ----
 async function syncScripts() {
   const s = await settings(), m = await meta(), u = user(s);
-  const exclude = s.paused.flatMap(d => [`*://${d}/*`, `*://*.${d}/*`]);
+  const exclude = [...s.paused.flatMap(d => [`*://${d}/*`, `*://*.${d}/*`]), ...sitePats(s.blockOnly)];
+  const noHide = sitePats(s.noHide);
   const scripts = [];
   const base = { allFrames: true, runAt: 'document_start' };
   // groups on for every site, and the extra ones that only run on Strict sites
@@ -175,8 +180,11 @@ async function syncScripts() {
     const ghide = [...cm.generichide, ...cm.elemhide, ...u.flags.generichide, ...u.flags.elemhide], ehide = [...cm.elemhide, ...u.flags.elemhide];
     for (const g of [...global, ...extra]) {
       const sfx = g === 'main' ? '' : '-' + g, matches = global.includes(g) ? ['<all_urls>'] : strictPats;
-      scripts.push({ ...base, id: 'shield-generic' + sfx, matches, excludeMatches: [...exclude, ...patternsFor(ghide)], css: [dirOf(g) + 'generic.css'] });
-      scripts.push({ ...base, id: 'shield-sg' + sfx, matches, excludeMatches: [...exclude, ...patternsFor(ehide)], css: [dirOf(g) + 'specific-generic.css'] });
+      // 1.5: only stylesheets with rules in them (each one is added to every frame); most generic rules are looked up
+      // by class / id instead (content.js -> "generic")
+      const c = (g === 'main' ? m.cosmetic : m.groups?.[g]?.cosmetic) || {};
+      if (c.genericCss !== 0) scripts.push({ ...base, id: 'shield-generic' + sfx, matches, excludeMatches: [...exclude, ...noHide, ...patternsFor(ghide)], css: [dirOf(g) + 'generic.css'] });
+      if (c.specificGeneric !== 0) scripts.push({ ...base, id: 'shield-sg' + sfx, matches, excludeMatches: [...exclude, ...noHide, ...patternsFor(ehide)], css: [dirOf(g) + 'specific-generic.css'] });
     }
     // the bundles of a Strict-only group are registered on the Strict sites; each bundle checks the site itself
     for (const b of await scriptlets()) {
@@ -185,10 +193,10 @@ async function syncScripts() {
       else if (extra.includes(g)) scripts.push({ ...base, id: 'shield-sl-' + b.id, matches: strictPats, excludeMatches: exclude, js: [b.file], world: 'MAIN' });
     }
   }
-  // the cosmetic script (and the cookie-banner clicker next to it): everywhere from Optimal up; at Basic only where
+  // the cosmetic script (it gets procedural.js / clicker.js only when the site needs them): everywhere from Optimal up; at Basic only where
   // something still needs it - what you hid yourself (every site) or a Strict site
   const cosmeticOn = global.length || u.counts.cosmetic ? ['<all_urls>'] : strictPats;
-  if (cosmeticOn.length) scripts.push({ ...base, id: 'shield-cosmetic', matches: cosmeticOn, excludeMatches: exclude, js: ['clicker.js', 'content.js'] });
+  if (cosmeticOn.length) scripts.push({ ...base, id: 'shield-cosmetic', matches: cosmeticOn, excludeMatches: exclude, js: ['content.js'] });
   const old = (await ext.scripting.getRegisteredContentScripts()).map(c => c.id);
   if (old.length) await ext.scripting.unregisterContentScripts({ ids: old }).catch(() => { });
   const errors = [];
@@ -212,19 +220,46 @@ let queue = Promise.resolve();
 const serial = f => (queue = queue.then(f, f).catch(e => console.warn('Hallow Shield:', e)));
 const syncAll = () => serial(() => Promise.all([syncRulesets().then(syncStrict), syncPauses(), syncUser(), syncScripts()]));
 
+// the badge colour follows the blocking level (and a site's own mode, on that site's tabs)
+async function badgeFor(tabId, url) {
+  const s = await settings(), color = badgeColor(s.level, siteModeOf(s, siteOf(url || '') || ''));
+  const o = tabId === undefined ? {} : { tabId };
+  try { await ext.action.setBadgeBackgroundColor({ ...o, color }); } catch { }
+  try { if (ext.action.setBadgeTextColor) await ext.action.setBadgeTextColor({ ...o, color: '#ffffff' }); } catch { }
+}
+async function badgeAll() {
+  await badgeFor(undefined, '');
+  try { for (const t of await ext.tabs.query({})) if (t.url) await badgeFor(t.id, t.url); } catch { }
+}
+ext.tabs?.onUpdated.addListener((tabId, info, tab) => { if (info.url || info.status === 'loading') badgeFor(tabId, info.url || tab?.url).catch(() => { }); });
+badgeAll().catch(() => { });
+
 ext.runtime.onInstalled.addListener(() => { syncAll(); try { dnr.setExtensionActionOptions({ displayActionCountAsBadgeText: true }); } catch { } startStats(); });
 ext.runtime.onStartup?.addListener(() => { syncAll(); startStats(); });
 ext.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   const k = Object.keys(changes);
-  if (k.every(x => ['fallback', 'fallbackNotBlock', 'scriptErrors', 'userRefused', 'userNotBlock', 'userSynced', 'stats', 'strictNotBlock', 'strictRules', 'strictError'].includes(x))) return;
-  if (k.includes('paused') || k.includes('strict')) serial(() => Promise.all([syncPauses(), syncScripts(), syncStrict()]));
+  if (k.every(x => ['fallback', 'fallbackNotBlock', 'scriptErrors', 'userRefused', 'userNotBlock', 'userSynced', 'stats', 'strictNotBlock', 'strictRules', 'strictError', 'fixFlow'].includes(x))) return;
+  cosmeticCache.clear();
+  if (k.some(x => Object.values(MODE_KEYS).includes(x))) serial(() => Promise.all([syncPauses(), syncScripts(), syncStrict()]));
+  if (k.some(x => ['level', ...Object.values(MODE_KEYS)].includes(x))) badgeAll().catch(() => { });
   if (k.some(x => ['level', 'lists', 'debugNoRoom', 'cookies', 'annoyances'].includes(x))) serial(() => Promise.all([syncRulesets().then(syncStrict), syncScripts()]));
   if (k.includes('myFilters')) serial(() => Promise.all([syncUser(), syncScripts()]));
 });
 
-// the hiding for one page: the lists' per-site filters of the groups that are on (not at Basic), plus My filters
-async function cosmeticsFor(s, host) {
+// the hiding for one page: the lists' per-site filters of the groups that are on (not at Basic), plus My filters.
+// 1.5: kept per site until a setting changes (every frame and page of a site asks again)
+const cosmeticCache = new Map();
+function cosmeticsFor(s, host) {
+  let p = cosmeticCache.get(host);
+  if (!p) {
+    if (cosmeticCache.size > 300) cosmeticCache.clear();
+    p = cosmeticsCompute(s, host).catch(e => { cosmeticCache.delete(host); throw e; });
+    cosmeticCache.set(host, p);
+  }
+  return p;
+}
+async function cosmeticsCompute(s, host) {
   const m = await meta(), cm = await cmeta(), u = user(s);
   const keys = cosmeticKeys(host);
   const listsEhide = onList(host, cm.elemhide), userEhide = onList(host, u.flags.elemhide);
@@ -242,6 +277,39 @@ async function cosmeticsFor(s, host) {
   return siteCosmetics(entries, { specifichide: onList(host, cm.specifichide) || onList(host, u.flags.specifichide), isGeneric: x => userGen.has(x) || gen.some(g => g.has(x)) });
 }
 
+// 1.5: generic hiding by class / id: which groups' keyed generic selectors apply on a site, minus its exceptions
+// (null: none - Basic, $generichide / $elemhide, No hiding / Blocking only, or a group switched off)
+const genericKeysCache = new Map();
+const genericKeys = g => { if (!genericKeysCache.has(g)) genericKeysCache.set(g, json(dirOf(g) + 'generic-keys.json').catch(() => ({}))); return genericKeysCache.get(g); };
+function genericInfo(s, host) {
+  const k = 'generic ' + host;
+  let p = cosmeticCache.get(k);
+  if (!p) {
+    p = (async () => {
+      const m = await meta(), cm = await cmeta(), u = user(s), mode = siteModeOf(s, host);
+      if (mode === 'nohide' || mode === 'blockonly' || mode === 'off') return null;
+      if ([cm.generichide, cm.elemhide, u.flags.generichide, u.flags.elemhide].some(l => onList(host, l))) return null;
+      const groups = groupsFor(s, m, host);
+      if (!groups.length) return null;
+      const except = new Set();
+      for (const key of cosmeticKeys(host)) {
+        for (const g of groups) { const e = (await shard(g, shardOf(key, cm.shards)))[key]; if (e && e.x) for (const x of e.x) except.add(x); }
+        const ue = u.cosmetic.sites[key]; if (ue && ue.x) for (const x of ue.x) except.add(x);
+      }
+      return { maps: await Promise.all(groups.map(genericKeys)), except };
+    })().catch(e => { cosmeticCache.delete(k); throw e; });
+    cosmeticCache.set(k, p);
+  }
+  return p;
+}
+async function genericCss(s, host, tokens) {
+  const info = await genericInfo(s, host);
+  if (!info) return '';
+  const out = new Set();
+  for (const t of tokens) { if (typeof t !== 'string') continue; for (const map of info.maps) { const l = map[t]; if (l) for (const sel of l) if (!info.except.has(sel)) out.add(sel); } }
+  return [...out].map(x => x + '{display:none!important}').join('\n');
+}
+
 // the cookie list's "click Reject" jobs for one site: [[selectors, extraMatch, delay]] (exceptions applied)
 async function clicksFor(host) {
   const c = await clicks(), keys = cosmeticKeys(host), use = new Set();
@@ -256,6 +324,25 @@ ext.runtime.onMessage.addListener((msg, sender, reply) => {
   if ((sender.url || '').startsWith(url(''))) {
     if (msg?.t === 'stats-get') { (async () => { await collectMatched(true); reply(await statsView()); })().catch(e => reply({ error: String(e) })); return true; }
     if (msg?.t === 'stats-clear') { (async () => { await statsClear(); reply(await statsView()); })().catch(e => reply({ error: String(e) })); return true; }
+    // the popup: cookie banners answered on this site (last 30 days)
+    if (msg?.t === 'site-clicks') { (async () => { await statsLoad(); reply({ n: clicksOn(statsMem, String(msg.site || '')) }); })().catch(() => reply({ n: 0 })); return true; }
+    // the popup ("Try fixing this site"): one site's mode, applied (rules and page scripts) before the tab is reloaded
+    if (msg?.t === 'site-mode') {
+      (async () => {
+        const site = String(msg.site || '').toLowerCase(), mode = String(msg.mode || '');
+        if (!validDomain(site) || !['normal', ...Object.keys(MODE_KEYS)].includes(mode)) return reply({ ok: false });
+        const cur = await ext.storage.local.get(Object.fromEntries(Object.values(MODE_KEYS).map(k => [k, []])));
+        const next = withSiteMode(cur, site, mode);
+        // back to Normal: a parent domain's entry (example.com for shop.example.com) would still apply, so it goes too
+        if (mode === 'normal') for (const k of Object.values(MODE_KEYS)) next[k] = next[k].filter(d => !site.endsWith('.' + d));
+        await ext.storage.local.set(next);
+        cosmeticCache.clear();
+        await serial(() => Promise.all([syncPauses(), syncScripts(), syncStrict()]));
+        if (Number.isInteger(msg.tabId)) await ext.tabs.reload(msg.tabId).catch(() => { });
+        reply({ ok: true, mode: siteModeOf(next, site) });
+      })().catch(e => reply({ ok: false, error: String(e) }));
+      return true;
+    }
     return;
   }
   if (!sender.tab) return;
@@ -264,20 +351,38 @@ ext.runtime.onMessage.addListener((msg, sender, reply) => {
     (async () => {
       const s = await settings(), host = String(msg.host || '').toLowerCase();
       if (!host || isPaused(s, host)) return reply(null);
-      const { css, proc } = await cosmeticsFor(s, host);
-      if (css) await ext.scripting.insertCSS({ target: { tabId: sender.tab.id, frameIds: [sender.frameId ?? 0] }, css });
+      const mode = siteModeOf(s, host);
+      if (mode === 'blockonly') return reply(null);
+      const { css, proc } = mode === 'nohide' ? { css: '', proc: [] } : await cosmeticsFor(s, host);
+      const frame = sender.documentId ? { tabId: sender.tab.id, documentIds: [sender.documentId] } : { tabId: sender.tab.id, frameIds: [sender.frameId ?? 0] };
+      if (css) await ext.scripting.insertCSS({ target: frame, css });
       // "Handle cookie banners": only with the cookie group on for this site (switch on; not at Basic unless Strict)
       const wantClicks = groupsFor(s, await meta(), host).includes('cookies') && s.lists?.['ublock-cookies'] !== false;
-      reply({ proc, clicks: wantClicks ? await clicksFor(host) : [] });
+      const clickJobs = wantClicks ? await clicksFor(host) : [];
+      // the engines this frame needs, injected only now (most frames need neither)
+      const files = [...(proc.length ? ['procedural.js'] : []), ...(clickJobs.length ? ['clicker.js'] : [])];
+      if (files.length) await ext.scripting.executeScript({ target: frame, files }).catch(() => ext.scripting.executeScript({ target: { tabId: sender.tab.id, frameIds: [sender.frameId ?? 0] }, files }));
+      reply({ proc, clicks: clickJobs, generic: !!(await genericInfo(s, host)) });
     })().catch(() => reply(null));
     return true;
+  }
+  // 1.5: the class / id names a page uses -> the generic hiding rules for them, added to that frame
+  if (msg?.t === 'generic') {
+    (async () => {
+      const s = await settings(), host = String(msg.host || '').toLowerCase();
+      if (!host || isPaused(s, host) || !Array.isArray(msg.tokens)) return;
+      const css = await genericCss(s, host, msg.tokens.slice(0, 5000));
+      const frame = sender.documentId ? { tabId: sender.tab.id, documentIds: [sender.documentId] } : { tabId: sender.tab.id, frameIds: [sender.frameId ?? 0] };
+      if (css) await ext.scripting.insertCSS({ target: frame, css });
+    })().catch(() => { });
+    return;
   }
   // a click the clicker made: counted (and only believed from a site Shield isn't paused on)
   if (msg?.t === 'clicked') {
     (async () => {
       const s = await settings(), host = String(msg.host || '').toLowerCase();
       if (!host || isPaused(s, host)) return;
-      await statsLoad(); addClick(statsMem, Date.now()); statsSave();
+      await statsLoad(); addClick(statsMem, Date.now(), siteOf(sender.tab.url || '') || host.replace(/^www\./, '')); statsSave();
     })().catch(() => { });
     return;
   }

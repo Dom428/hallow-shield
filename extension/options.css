@@ -11,7 +11,7 @@ header img { width: 24px; height: 24px; }
 .sites th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12.5px; padding: 4px 6px; }
 .sites td { padding: 6px; border-top: 1px solid var(--line); }
 .sites td:last-child { text-align: right; }
-.sites .mode-strict { color: #ff8a7a; font-weight: 600; } .sites .mode-off { color: var(--muted); font-weight: 600; }
+.sites .mode-strict { color: #ff8a7a; font-weight: 600; } .sites .mode-off, .sites .mode-nohide, .sites .mode-blockonly { color: var(--muted); font-weight: 600; }
 .access { margin: 10px 0; padding: 10px 14px; border: 1px solid var(--accent); border-radius: 10px; background: rgba(240, 120, 32, .07); }
 .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 12px 0; }
 .tile { padding: 10px 12px; background: #14101b; border: 1px solid var(--line); border-radius: 10px; }

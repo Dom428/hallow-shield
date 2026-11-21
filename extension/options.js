@@ -3,6 +3,7 @@
 // userfilters.js) so every line shows what it became or why it was refused; the background turns the saved text into
 // dynamic rules and hiding CSS. Export / import use a plain text file on this PC - nothing is sent anywhere.
 import { compileUserFilters } from './userfilters.js';
+import { MODE_KEYS, MODE_LABEL } from './shared.js';
 const ext = globalThis.browser ?? chrome;
 const $ = id => document.getElementById(id);
 const box = $('filters');
@@ -126,19 +127,20 @@ function showTab() {
 }
 window.addEventListener('hashchange', showTab);
 
-// ---- Sites: the per-site modes chosen in the popup (Strict / Off), each with Delete (back to Normal) ----
+// ---- Sites: the per-site modes chosen in the popup (Strict / Off, and the No hiding / Blocking only steps "Try fixing
+// this site" can leave), each with Delete (back to Normal) ----
 async function renderSites() {
-  const s = await ext.storage.local.get({ paused: [], strict: [], strictRules: 0, strictError: '' });
-  const rows = [...s.strict.map(d => [d, 'strict']), ...s.paused.map(d => [d, 'off'])].sort((a, b) => a[0] < b[0] ? -1 : 1);
+  const s = await ext.storage.local.get({ paused: [], strict: [], noHide: [], blockOnly: [], strictRules: 0, strictError: '' });
+  const rows = Object.entries(MODE_KEYS).flatMap(([mode, k]) => s[k].map(d => [d, mode])).sort((a, b) => a[0] < b[0] ? -1 : 1);
   $('siteRows').replaceChildren(...rows.map(([d, mode]) => {
     const tr = document.createElement('tr'); tr.dataset.site = d;
     const a = document.createElement('td'); a.textContent = d;
-    const b = document.createElement('td'); b.className = 'mode-' + mode; b.textContent = mode === 'strict' ? 'Strict' : 'Off (paused)';
+    const b = document.createElement('td'); b.className = 'mode-' + mode; b.textContent = MODE_LABEL[mode];
     const c = document.createElement('td');
     const del = document.createElement('button'); del.textContent = 'Delete'; del.title = 'Back to Normal on ' + d;
     del.onclick = async () => {
-      const cur = await ext.storage.local.get({ paused: [], strict: [] });
-      await ext.storage.local.set({ [mode === 'strict' ? 'strict' : 'paused']: cur[mode === 'strict' ? 'strict' : 'paused'].filter(x => x !== d) });
+      const k = MODE_KEYS[mode], cur = await ext.storage.local.get({ [k]: [] });
+      await ext.storage.local.set({ [k]: cur[k].filter(x => x !== d) });
       renderSites();
     };
     c.append(del); tr.append(a, b, c); return tr;
@@ -146,7 +148,7 @@ async function renderSites() {
   $('sitesEmpty').hidden = rows.length > 0;
   $('strictInfo').textContent = s.strict.length ? (s.strictError ? 'The browser refused the Strict rules: ' + s.strictError : `Strict sites use ${s.strictRules} extra rules (pop-up and annoyance lists, limited to those sites).`) : '';
 }
-ext.storage.onChanged.addListener((ch, area) => { if (area === 'local' && (ch.paused || ch.strict || ch.strictRules) && !document.querySelector('[data-pane="sites"]').hidden) renderSites(); });
+ext.storage.onChanged.addListener((ch, area) => { if (area === 'local' && (ch.paused || ch.strict || ch.noHide || ch.blockOnly || ch.strictRules) && !document.querySelector('[data-pane="sites"]').hidden) renderSites(); });
 
 // ---- Stats ----
 const num = n => n.toLocaleString();

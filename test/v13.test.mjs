@@ -99,9 +99,10 @@ test('per-site mode: Off is the paused list, Strict its own list, Normal neither
   assert.equal(siteModeOf(s, 'off.test'), 'off'); assert.equal(siteModeOf(s, 'www.off.test'), 'off');
   assert.equal(siteModeOf(s, 'strict.test'), 'strict'); assert.equal(siteModeOf(s, 'a.strict.test'), 'strict');
   assert.equal(siteModeOf(s, 'other.test'), 'normal'); assert.equal(siteModeOf({}, 'x.test'), 'normal');
-  assert.deepEqual(withSiteMode(s, 'off.test', 'strict'), { paused: [], strict: ['strict.test', 'off.test'] });
-  assert.deepEqual(withSiteMode(s, 'strict.test', 'off'), { paused: ['off.test', 'strict.test'], strict: [] });
-  assert.deepEqual(withSiteMode(s, 'strict.test', 'normal'), { paused: ['off.test'], strict: [] });
+  const none = { noHide: [], blockOnly: [] };   // 1.5's two extra modes
+  assert.deepEqual(withSiteMode(s, 'off.test', 'strict'), { paused: [], strict: ['strict.test', 'off.test'], ...none });
+  assert.deepEqual(withSiteMode(s, 'strict.test', 'off'), { paused: ['off.test', 'strict.test'], strict: [], ...none });
+  assert.deepEqual(withSiteMode(s, 'strict.test', 'normal'), { paused: ['off.test'], strict: [], ...none });
 });
 
 test('Strict rules: limited to the Strict sites; regex / redirect / header rules left out', () => {
@@ -162,9 +163,9 @@ test('stats: what counts as a block, and as ads / trackers / other; the host a r
   assert.equal(domainOfRule({ condition: { urlFilter: '/banner/' } }), null);
 });
 
-test('the version is 1.4 everywhere, and the zips get a version.json', () => {
+test('the version is the same everywhere, and the zips get a version.json', () => {
   const mf = JSON.parse(read('../extension/manifest.json')), pkg = JSON.parse(read('../package.json'));
-  assert.equal(mf.version, '1.4'); assert.equal(pkg.version, '1.4.0');
+  assert.equal(pkg.version, mf.version + '.0');
   assert.ok(mf.permissions.includes('alarms')); assert.ok(!mf.permissions.includes('declarativeNetRequestFeedback'), 'feedback access stays optional');
   assert.deepEqual(mf.optional_permissions, ['declarativeNetRequestFeedback']);
   assert.match(read('../tools/package.mjs'), /version\.json/);

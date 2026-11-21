@@ -9,9 +9,16 @@
 - **What runs in pages** (only at the Optimal and Complete levels, and only on sites Shield has access to):
   - a content script that tells Shield's own background script the site's name, so the right "hide this ad box" CSS
     can be added, and then applies that site's procedural hiding rules (for example "hide the box that says
-    Sponsored"). It reads nothing else and sends nothing anywhere.
+    Sponsored"). Since 1.5 it also tells the background which class and id names the page's elements use (only those
+    names, for example "ad-banner"), so only the generic hiding rules for those names are added instead of a
+    14,000-rule stylesheet in every frame. It reads nothing else (no text, no addresses, no form fields) and sends
+    nothing anywhere - the background script is part of the extension, on your PC.
   - the lists' small page fixes ("scriptlets") on the sites the lists name - for example the ones that remove the ad
-    data from YouTube's player responses. They change how the page behaves inside your browser and send nothing.
+    data from YouTube's player responses, edit a site's JSON settings ("ads: off"), or put a link's real destination
+    in place of a tracking redirect (`href-sanitizer`). They change how the page behaves inside your browser and send
+    nothing.
+  - since 1.5 the procedural hiding engine and the cookie-banner clicker are only added to a page (by Shield's
+    background, from inside the extension) when that site has filters for them.
 - **The element zapper** ("Hide something on this page" / "Zap once") is injected only into the tab you opened the
   popup on, and only when you click the button (the browser's "activeTab" access). It looks at the page in your
   browser to work out a selector for what you point at. "Hide" saves that rule (`site##selector`) in My filters;
@@ -29,9 +36,16 @@
   page (Chrome calls it "Read your browsing history"): with it the browser tells Shield which of its rules matched on
   which tab, not the addresses. Development builds use the browser's debug event, which includes the address, to
   count the blocked host.
+- **Try fixing this site** (after **Report a broken site** in the popup) only changes Shield's own setting for that
+  site, step by step (Normal, No hiding, Blocking only, Off), reloads the tab and asks you whether it works. The step
+  it's on is kept in Shield's storage while you look; the setting you say yes to stays (like Strict or Off). Nothing is
+  sent anywhere.
+- **The popup's "N cookie banners answered here"** comes from the stats above (the clicks are counted per site since
+  1.5), for the last 30 days.
 - **What is stored, on your PC only** (browser extension storage): your blocking level, which lists you switched off,
-  the cookie-banner and annoyance switches, the sites you set to Strict or Off (paused), My filters (including what you
-  hid with the zapper) and the stats above.
+  the cookie-banner and annoyance switches, the sites you set to Strict, Off (paused), No hiding or Blocking only, the
+  step "Try fixing this site" is on, My filters (including what you hid with the zapper) and the stats above (with
+  cookie banners answered per site).
 - **The count in the popup** comes from the browser, for the tab you opened the popup on, and is not stored as such
   (the stats are counted separately, see above).
 - **Report a broken site** only copies a short text to your clipboard (the page address without its query string,

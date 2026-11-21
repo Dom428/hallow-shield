@@ -2,8 +2,9 @@
 # extension in Chromium against test pages (sample
 # lists), then builds the rules from the newest lists (uBlock filters, EasyList, EasyPrivacy, Peter Lowe,
 # the cookie-notice and annoyance lists), has Chromium
-# check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, packs the zips,
-# and lints the Firefox package.
+# check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, measures what
+# Shield costs a heavy page (load time and content-script time, with the real rules; fails over budget), packs the
+# zips, and lints the Firefox package.
 name: Build
 
 on:
@@ -38,6 +39,8 @@ jobs:
         run: node tools/explain.mjs http://securepubads.g.doubleclick.net/tag/js/gpt.js http://news.example.org/page script
       - name: Chromium loads the real rules, blocks real ad servers, real YouTube filters on a fake page
         run: npm run smoke
+      - name: Performance budget (heavy page with and without Shield, real rules)
+        run: npm run perf
       - name: Pack for Chrome / Edge / Brave / Opera and Firefox
         run: npm run package
       - name: Each zip carries version.json
@@ -59,6 +62,8 @@ jobs:
         if: always()
         with:
           name: shield-screens
-          path: /tmp/shield-*.png
+          path: |
+            /tmp/shield-*.png
+            /tmp/shield-perf.json
           if-no-files-found: ignore
           retention-days: 7
