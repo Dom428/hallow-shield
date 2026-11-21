@@ -16,7 +16,7 @@ const regexes = [];
 for (const id of sets) for (const r of JSON.parse(fs.readFileSync(path.join(RULES, id + '.json'), 'utf8'))) if (r.condition.regexFilter) regexes.push({ id, rule: r.id, regex: r.condition.regexFilter, cs: !!r.condition.isUrlFilterCaseSensitive });
 
 const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'shield-re-')), {
-  headless: true, channel: 'chromium', args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+  headless: true, channel: 'chromium', args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--enable-logging=stderr', '--v=0'],
 });
 const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 120000 }).catch(async e => { const p = await ctx.newPage(); await p.goto('chrome://extensions-internals').catch(() => { }); console.log((await p.textContent('body').catch(() => '')).slice(0, 4000)); throw e; });
 const answers = await sw.evaluate(async list => {
