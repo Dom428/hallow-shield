@@ -1,6 +1,6 @@
-// Hallow Shield popup: this site (pause / resume) and what was blocked on it, the blocking level, the cookie-banner and
+// Hallow Shield popup: this site (Strict / Normal / Off - Off is the same as Pause) and what was blocked on it, the blocking level, the cookie-banner and
 // annoyance switches, the element zapper and My filters, the lists (Advanced), and "Report a broken site" (copies the details to your clipboard - Shield sends nothing anywhere).
-import { siteOf, validDomain, LEVELS, DEFAULT_LEVEL, PAUSE_BASE, USER_BASE } from './shared.js';
+import { siteOf, validDomain, siteModeOf, withSiteMode, LEVELS, DEFAULT_LEVEL, PAUSE_BASE, USER_BASE, STRICT_BASE } from './shared.js';
 const ext = globalThis.browser ?? chrome;
 const $ = id => document.getElementById(id);
 
@@ -8,26 +8,35 @@ const $ = id => document.getElementById(id);
 const forTab = Number(new URLSearchParams(location.search).get('tab'));
 const tab = forTab ? await ext.tabs.get(forTab) : (await ext.tabs.query({ active: true, currentWindow: true }))[0];
 const site = tab && siteOf(tab.url);
-const s = await ext.storage.local.get({ paused: [], level: DEFAULT_LEVEL, lists: {}, cookies: true, annoyances: false, myFilters: '', fallback: {}, fallbackNotBlock: [], userNotBlock: [] });
+const s = await ext.storage.local.get({ paused: [], strict: [], strictNotBlock: [], level: DEFAULT_LEVEL, lists: {}, cookies: true, annoyances: false, myFilters: '', fallback: {}, fallbackNotBlock: [], userNotBlock: [] });
 if (!LEVELS.includes(s.level)) s.level = DEFAULT_LEVEL;
 const meta = await (await fetch(ext.runtime.getURL('rules/meta.json'))).json();
 const version = ext.runtime.getManifest().version;
 
 $('site').textContent = site || 'This page';
-const paused = () => site && s.paused.includes(site);
-function showPause() {
-  $('pause').textContent = paused() ? 'Resume on this site' : 'Pause on this site';
-  $('pause').classList.toggle('paused', paused());
-  $('note').textContent = paused() ? 'Ads and trackers are allowed on ' + site + '. Reload the page to see the change.' : '';
+// this site: Strict (Complete + annoyances here only), Normal (the settings below) or Off (= Pause)
+const mode = () => siteModeOf(s, site);
+const MODE_NOTE = {
+  strict: site => 'Strict on ' + site + ': Complete blocking plus annoyances, on this site only.',
+  off: site => 'Shield is off on ' + site + ' (the same as Pause): ads and trackers are allowed here.',
+  normal: () => '',
+};
+function showMode() {
+  for (const b of document.querySelectorAll('#mode button')) { const on = b.dataset.mode === mode(); b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
+  $('note').textContent = site && validDomain(site) ? MODE_NOTE[mode()](site) : 'Hallow Shield works on web pages (http and https).';
 }
-if (!site || !validDomain(site)) { $('pause').disabled = true; $('note').textContent = 'Hallow Shield works on web pages (http and https).'; }
-$('pause').onclick = async () => {
-  s.paused = paused() ? s.paused.filter(d => d !== site) : [...s.paused, site].slice(-500);
-  await ext.storage.local.set({ paused: s.paused });
-  showPause();
+if (!site || !validDomain(site)) for (const b of document.querySelectorAll('#mode button')) b.disabled = true;
+for (const b of document.querySelectorAll('#mode button')) b.onclick = async () => {
+  if (b.dataset.mode === mode()) return;
+  // a site that's on because of a parent domain's setting (sub.example.com under example.com) gets its own entry
+  const next = withSiteMode(s, site, b.dataset.mode);
+  if (b.dataset.mode === 'normal') { next.paused = next.paused.filter(d => !(site === d || site.endsWith('.' + d))); next.strict = next.strict.filter(d => !(site === d || site.endsWith('.' + d))); }
+  Object.assign(s, next);
+  await ext.storage.local.set(next);
+  showMode();
   if (tab) ext.tabs.reload(tab.id);
 };
-showPause();
+showMode();
 
 // blocking level
 const LEVEL_TEXT = {
@@ -38,11 +47,11 @@ const LEVEL_TEXT = {
 let access = true;
 try { access = await ext.permissions.contains({ origins: ['<all_urls>'] }); } catch { }
 function showLevel() {
-  for (const b of document.querySelectorAll('.seg button')) { const on = b.dataset.level === s.level; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
+  for (const b of document.querySelectorAll('.seg button[data-level]')) { const on = b.dataset.level === s.level; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }
   $('levelText').textContent = LEVEL_TEXT[s.level] + (s.level !== 'basic' && !access ? ' Shield can\'t access sites yet:' : '');
   $('grant').hidden = s.level === 'basic' || access;
 }
-for (const b of document.querySelectorAll('.seg button')) b.onclick = async () => { s.level = b.dataset.level; await ext.storage.local.set({ level: s.level }); showLevel(); showGroups(); };
+for (const b of document.querySelectorAll('.seg button[data-level]')) b.onclick = async () => { s.level = b.dataset.level; await ext.storage.local.set({ level: s.level }); showLevel(); showGroups(); };
 $('grant').onclick = async () => { try { access = await ext.permissions.request({ origins: ['<all_urls>'] }); } catch { } showLevel(); };
 showLevel();
 
@@ -52,7 +61,7 @@ const groupIsOn = g => g === 'cookies' ? s.cookies !== false : g === 'annoyances
 function showGroups() {
   for (const g of GROUPS) for (const box of document.querySelectorAll(`input[data-group="${g}"]`)) box.checked = groupIsOn(g);
   for (const lab of document.querySelectorAll('#lists label[data-in]')) lab.classList.toggle('off', !groupIsOn(lab.dataset.in));
-  $('hideNote').textContent = s.level === 'basic' && (s.cookies !== false || s.annoyances) ? 'At Basic only their blocking rules apply: choose Optimal to hide banners too.' : '';
+  $('hideNote').textContent = s.level === 'basic' && (s.cookies !== false || s.annoyances) ? 'At Basic only their blocking rules apply: choose Optimal to hide banners and click "Reject" too.' : '';
 }
 async function setGroup(g, on) { s[g] = on; await ext.storage.local.set({ [g]: on }); showGroups(); }
 $('cookies').dataset.group = 'cookies'; $('annoyances').dataset.group = 'annoyances';
@@ -72,10 +81,11 @@ async function pick(mode) {
 $('pick').onclick = () => pick('hide');
 $('zap').onclick = () => pick('zap');
 $('myfilters').onclick = () => { ext.runtime.openOptionsPage(); if (!forTab) window.close(); };
+$('stats').onclick = () => { ext.tabs.create({ url: ext.runtime.getURL('options.html#stats') }); if (!forTab) window.close(); };
 
 // Advanced: the lists, by group (a group's box is the same switch as above)
 const fmt = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
-const GROUP_TITLE = { main: 'Ads, privacy and security', cookies: 'Cookie banners (on by default)', annoyances: 'Annoyances (off by default)' };
+const GROUP_TITLE = { main: 'Ads, privacy and security', cookies: 'Cookie banners: hide + reject (on by default)', annoyances: 'Annoyances (off by default)' };
 let lastGroup = '';
 for (const [id, l] of Object.entries(meta.lists)) {
   const g = l.group || 'main';
@@ -108,9 +118,9 @@ $('room').textContent = fb.length ? 'Not enough room in the browser\'s shared ru
 let blocked = null;
 try {
   const m = await ext.declarativeNetRequest.getMatchedRules({ tabId: tab.id });
-  const notBlock = new Set(s.fallbackNotBlock), userNotBlock = new Set(s.userNotBlock);
+  const notBlock = new Set(s.fallbackNotBlock), userNotBlock = new Set(s.userNotBlock), strictNotBlock = new Set(s.strictNotBlock);
   blocked = m.rulesMatchedInfo.filter(({ rule: r }) => {
-    if (r.rulesetId === '_dynamic') return r.ruleId < PAUSE_BASE ? !notBlock.has(r.ruleId) : r.ruleId >= USER_BASE && !userNotBlock.has(r.ruleId);
+    if (r.rulesetId === '_dynamic') return r.ruleId < PAUSE_BASE ? !notBlock.has(r.ruleId) : r.ruleId >= STRICT_BASE ? !strictNotBlock.has(r.ruleId) : r.ruleId >= USER_BASE && !userNotBlock.has(r.ruleId);
     const rs = meta.rulesets[r.rulesetId];   // in each ruleset: exceptions first, then header/parameter rules, then blocks
     return rs && r.ruleId > rs.allow + rs.modify;
   }).length;
@@ -128,8 +138,8 @@ $('report').onclick = async () => {
     `Page: ${page}`,
     `Shield: ${version} (lists built ${meta.built.slice(0, 10)})`,
     `Browser: ${navigator.userAgent}`,
-    `Blocking: ${s.level}${paused() ? ' (paused on this site)' : ''}${access ? '' : ' (no site access)'}`,
-    `Hide cookie banners: ${s.cookies !== false ? 'on' : 'off'}; hide annoyances: ${s.annoyances ? 'on' : 'off'}; my filters: ${s.myFilters.split('\n').filter(l => l.trim() && !l.trim().startsWith('!')).length}`,
+    `Blocking: ${s.level}; this site: ${mode()}${access ? '' : ' (no site access)'}`,
+    `Handle cookie banners: ${s.cookies !== false ? 'on' : 'off'}; hide annoyances: ${s.annoyances ? 'on' : 'off'}; my filters: ${s.myFilters.split('\n').filter(l => l.trim() && !l.trim().startsWith('!')).length}`,
     `Lists: ${on.map(id => `${meta.lists[id].name} ${meta.lists[id].version}`).join('; ')}`,
     `Blocked on this page: ${blocked ?? '-'}`,
     fb.length ? `Dynamic fallback: ${fb.map(([id, f]) => `${id} ${f.loaded}/${f.of}`).join(', ')}` : '',

@@ -28,6 +28,10 @@ assert.ok(meta.enabledAtInstall <= 30000, `enabled at install ${meta.enabledAtIn
 assert.ok(meta.regex <= 1000, `${meta.regex} regex rules`);
 assert.ok(Object.keys(meta.rulesets).length <= 50);
 assert.ok(meta.scriptlets.used['json-prune'] || meta.scriptlets.used['set-constant'], 'scriptlets built');
+// 1.3: the cookie list's "click Reject" filters are used (by Shield's clicker), and how many scriptlet filters are still skipped
+assert.ok(meta.scriptlets.clicks.filters > 300 && meta.scriptlets.clicks.sites > 300, 'cookie-banner click filters: ' + JSON.stringify(meta.scriptlets.clicks));
+console.log('cookie-banner click filters: ' + JSON.stringify(meta.scriptlets.clicks) + '; scriptlet filters still skipped: ' + meta.scriptlets.filtersSkipped);
+console.log('skipped scriptlets: ' + JSON.stringify(Object.entries(meta.scriptlets.skipped).sort((a, b) => b[1] - a[1]).slice(0, 25)));
 assert.ok(L['easylist-cookies'].cosmetic > 1000 && L['ublock-cookies'].lines > 1000 && L['ublock-annoyances'].lines > 1000 && L['fanboy-annoyances'].cosmetic > 1000 && L['fanboy-social'].cosmetic > 500,
   'annoyance lists converted: ' + JSON.stringify(Object.fromEntries(['ublock-cookies', 'easylist-cookies', 'ublock-annoyances', 'fanboy-annoyances', 'fanboy-social'].map(k => [k, [L[k].lines, L[k].network, L[k].cosmetic]]))));
 // a few real generic selectors of the plain ".class" / "#id" kind, to put on a test page

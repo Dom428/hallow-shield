@@ -1,9 +1,16 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="options.css"><title>Hallow Shield - My filters</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="options.css"><title>Hallow Shield - Options</title></head>
 <body>
-  <header><img src="icons/32.png" alt=""><span class="brand">HALLOW</span> SHIELD <span class="muted">- My filters</span></header>
+  <header><img src="icons/32.png" alt=""><span class="brand">HALLOW</span> SHIELD
+    <nav class="tabs" role="tablist" aria-label="Options">
+      <a href="#filters" role="tab" data-tab="filters">My filters</a>
+      <a href="#sites" role="tab" data-tab="sites">Sites</a>
+      <a href="#stats" role="tab" data-tab="stats">Stats</a>
+    </nav>
+  </header>
   <main>
+    <div class="pane" data-pane="filters">
     <section>
       <h1>My filters</h1>
       <p class="muted">Your own filters, one per line, in Adblock Plus / uBlock Origin syntax. They stay in the browser on
@@ -35,6 +42,63 @@
       <p class="muted small">The hiding filters for one site, from the zapper or typed above. Delete one to see that part of the site again.</p>
       <ul id="zapped" class="zapped"></ul>
     </section>
+    </div>
+
+    <div class="pane" data-pane="sites" hidden>
+    <section>
+      <h1>Sites</h1>
+      <p class="muted">What you chose for single sites in the popup. <b>Strict</b>: Complete blocking plus the annoyance
+        lists, on that site only. <b>Off</b>: Shield does nothing there (the same as Pause). Every other site is
+        <b>Normal</b> and follows your settings. Delete a site to make it Normal again.</p>
+      <table class="sites"><thead><tr><th>Site</th><th>Mode</th><th></th></tr></thead><tbody id="siteRows"></tbody></table>
+      <p id="sitesEmpty" class="muted small" hidden>No sites set yet - every site is Normal.</p>
+      <p id="strictInfo" class="muted small"></p>
+    </section>
+    </div>
+
+    <div class="pane" data-pane="stats" hidden>
+    <section>
+      <h1>Stats</h1>
+      <p class="muted small">Kept in Shield's own storage in this browser, on this PC - never sent anywhere. Last 30 days.</p>
+      <div id="statsAccess" class="access" hidden>
+        <p><b>Blocked counts need one more permission.</b> The browser only tells an extension which of its rules it
+          applied if the extension has the "declarativeNetRequestFeedback" access. Chrome describes it as
+          <i>"Read your browsing history"</i>: with it, Shield can ask which rule blocked something on which tab - it
+          still never sees the requests themselves, and nothing leaves your PC. Without it only the cookie-banner clicks
+          are counted.</p>
+        <button id="statsGrant" class="primary">Turn on blocked counts</button>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="n" id="tBlocked">0</div><div class="muted small">blocked in 30 days</div></div>
+        <div class="tile"><div class="n" id="tToday">0</div><div class="muted small">blocked today</div></div>
+        <div class="tile"><div class="n" id="tAds">0</div><div class="muted small">ads</div></div>
+        <div class="tile"><div class="n" id="tTrackers">0</div><div class="muted small">trackers</div></div>
+        <div class="tile"><div class="n" id="tClicks">0</div><div class="muted small">cookie banners answered</div></div>
+      </div>
+      <h2>Per day</h2>
+      <div class="legend small"><span class="key ads"></span>Ads <span class="key trackers"></span>Trackers <span class="key other"></span>Other (badware, cookie banners, annoyances, my filters)</div>
+      <div id="chart" class="chart" role="img" aria-label="Blocked per day, last 30 days"></div>
+      <div class="cols">
+        <div><h2>Top sites</h2><ol id="topSites" class="top"></ol></div>
+        <div><h2>Top blocked hosts</h2><ol id="topDomains" class="top"></ol><p id="sharedNote" class="muted small"></p></div>
+      </div>
+      <div class="bar"><button id="statsRefresh">Refresh</button><span class="spacer"></span><button id="statsClear">Clear stats</button></div>
+      <p id="statsStatus" class="small" role="status"></p>
+      <details class="limits"><summary>Honest limits</summary>
+        <ul class="muted small">
+          <li>The browser decides what an extension may know. Blocked counts come from the browser's list of the rules it
+            applied (read about once a minute and when a tab closes, within its limit of 20 reads per 10 minutes); pages
+            you leave quickly may be under-counted.</li>
+          <li>The blocked host is only known when the rule that blocked it names one host. Many hosts share one rule
+            (that's how Shield fits the lists into the browser's limits); those are counted as "shared host rules".</li>
+          <li>The site is the tab's site at the time; requests from service workers or closed tabs count without a site.</li>
+          <li>"Ads" are the uBlock filters, EasyList and Peter Lowe's lists; "trackers" EasyPrivacy and uBlock Privacy;
+            the rest is "other". A request two lists would block is counted once, for the list the browser used.</li>
+          <li>Cookie-banner clicks are counted by Shield itself, one per "Reject" (or "settings", then "Reject") click.</li>
+        </ul>
+      </details>
+    </section>
+    </div>
   </main>
   <script type="module" src="options.js"></script>
 </body>

@@ -55,3 +55,4 @@ youtube.test##+js(json-prune-xhr-response, playerAds adPlacements adSlots, , pro
 youtube.test##+js(trusted-replace-fetch-response, /"adBreakHeartbeatParams":"[^"]*"/, "adBreakHeartbeatParams":"", /youtubei/v1/player)
 google.*##+js(set, entityTest, true)
 news.test##+js(rmnt, script, removeMe)
+other.test##+js(trusted-click-element, #cmp .reject-all)

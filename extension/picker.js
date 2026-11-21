@@ -5,6 +5,8 @@
 //   Down / S / "Narrower": back towards what you pointed at     click / Enter: hide it    Esc: cancel
 // Hide: the rule is saved as "site##selector" in My filters (stored in the extension, on this PC). Zap once: the
 // element is removed from this page only and nothing is saved.
+// Frames: inside frames of the page's own origin the picker works as on the page itself (hover, wider / narrower -
+// "Wider" from a frame's top element picks the frame); a frame from another site can be picked as a whole.
 (() => {
   const ext = globalThis.browser ?? chrome;
   const mode = globalThis.__hallowShieldPickMode === 'zap' ? 'zap' : 'hide';
@@ -53,26 +55,42 @@
     $('.verb').textContent = curMode === 'zap' ? 'zap' : 'hide on this site';
   }
   setMode(mode);
-  const countOf = sel => document.querySelectorAll(sel).length;
+  const countIn = doc => sel => doc.querySelectorAll(sel).length;
+  // the frame element a same-origin frame's document sits in (null for the page itself, or a frame we can't reach)
+  const frameOf = doc => { try { return doc.defaultView && doc.defaultView !== window ? doc.defaultView.frameElement : null; } catch { return null; } };
+  // where an element of a (nested, same-origin) frame is on the page
+  function pageRect(el) {
+    const r = el.getBoundingClientRect(); let x = r.left, y = r.top, doc = el.ownerDocument, fe;
+    while ((fe = frameOf(doc))) {
+      const fr = fe.getBoundingClientRect(), cs = fe.ownerDocument.defaultView.getComputedStyle(fe);
+      x += fr.left + fe.clientLeft + (parseFloat(cs.paddingLeft) || 0); y += fr.top + fe.clientTop + (parseFloat(cs.paddingTop) || 0);
+      doc = fe.ownerDocument;
+    }
+    return { left: x, top: y, width: r.width, height: r.height };
+  }
   function show(el) {
     current = el;
     if (!el) { box.style.display = 'none'; selector = null; selBox.textContent = 'Point at something on the page'; count.textContent = ''; go.disabled = true; return; }
-    const r = el.getBoundingClientRect();
+    const r = pageRect(el), countOf = countIn(el.ownerDocument);
     Object.assign(box.style, { display: 'block', left: r.left + 'px', top: r.top + 'px', width: Math.max(r.width, 2) + 'px', height: Math.max(r.height, 2) + 'px' });
     selector = S.selectorFor(el, countOf);
     selBox.textContent = selector || '(this element can\'t be named)';
     const n = selector ? countOf(selector) : 0;
-    count.textContent = selector ? (n === 1 ? 'Matches this element only' : `Matches ${n} elements`) : '';
+    const where = frameOf(el.ownerDocument) ? ' (in a frame)' : '';
+    count.textContent = selector ? (n === 1 ? 'Matches this element only' + where : `Matches ${n} elements${where}`) : '';
     go.disabled = !selector;
   }
   const ours = e => e.composedPath().includes(host);
-  const pick = (x, y) => {
-    const el = document.elementFromPoint(x, y);
-    return el && el !== host && el !== document.documentElement && el !== document.body ? el : null;
+  const pick = (doc, x, y) => {
+    const el = doc.elementFromPoint(x, y);
+    return el && el !== host && el !== doc.documentElement && el !== doc.body ? el : null;
   };
   function wider() {
     if (!current) return;
-    const p = current.parentElement;
+    let p = current.parentElement;
+    const doc = current.ownerDocument;
+    // from a frame's top element to the frame itself
+    if (!p || p === doc.body || p === doc.documentElement) p = frameOf(doc);
     if (!p || p === document.body || p === document.documentElement) return;
     trail.push(current); show(p);
   }
@@ -86,13 +104,17 @@
     if (!current || !selector) return;
     const sel = selector, el = current;
     if (curMode === 'zap') { el.remove(); stop(); return; }
-    for (const e of document.querySelectorAll(sel)) e.style.setProperty('display', 'none', 'important');
+    const doc = el.ownerDocument;
+    for (const e of doc.querySelectorAll(sel)) e.style.setProperty('display', 'none', 'important');
     stop();
-    ext.runtime.sendMessage({ t: 'zap-save', host: location.hostname, selector: sel }).catch?.(() => { });
+    // a same-origin frame has the page's site; a frame without one of its own (about:blank) is saved for the page
+    let h = location.hostname; try { h = doc.location.hostname || h; } catch { }
+    ext.runtime.sendMessage({ t: 'zap-save', host: h, selector: sel }).catch?.(() => { });
   }
   function stop() {
-    for (const [t, f] of handlers) window.removeEventListener(t, f, true);
-    window.removeEventListener('scroll', reposition, true);
+    clearInterval(frameTimer); unmarkForeign();
+    for (const w of wins) { try { for (const [t, f] of handlers) w.removeEventListener(t, f, true); w.removeEventListener('scroll', reposition, true); } catch { } }
+    wins.clear();
     host.remove();
     delete globalThis.__hallowShieldPicker;
   }
@@ -101,7 +123,8 @@
   const handlers = [
     ['mousemove', e => {
       if (ours(e)) return;
-      const el = pick(e.clientX, e.clientY);
+      const doc = (e.view && e.view.document) || document;
+      const el = (doc === document && foreignAt(e.clientX, e.clientY)) || pick(doc, e.clientX, e.clientY);
       if (el && el !== pointed) { pointed = el; trail = []; show(el); }
     }],
     ['click', e => { if (ours(e)) return; swallow(e); commit(); }],
@@ -118,8 +141,43 @@
       if (k === 'Enter') { swallow(e); commit(); }
     }],
   ];
-  for (const [t, f] of handlers) window.addEventListener(t, f, true);
-  window.addEventListener('scroll', reposition, true);
+  // the page and every frame of its own origin (checked again every second, for frames added later)
+  const wins = new Set();
+  function listen(w) {
+    if (wins.has(w)) return;
+    try { void w.document.documentElement; } catch { return; }   // another site's frame: can't reach inside
+    wins.add(w);
+    for (const [t, f] of handlers) w.addEventListener(t, f, true);
+    w.addEventListener('scroll', reposition, true);
+  }
+  function listenAll(w, depth = 0) {
+    listen(w);
+    if (depth > 4) return;
+    let frames = []; try { frames = [...w.document.querySelectorAll('iframe, frame')]; } catch { return; }
+    for (const f of frames) { let cw = null; try { cw = f.contentWindow; void cw.document.documentElement; } catch { continue; } if (cw) listenAll(cw, depth + 1); }
+  }
+  // frames from other sites: their pages can't be reached, so while picking they let the mouse through to the page (the
+  // frame itself is then picked by where the pointer is)
+  const foreign = new Map();
+  function markForeign() {
+    for (const f of document.querySelectorAll('iframe, frame, embed, object')) {
+      if (foreign.has(f)) continue;
+      let reachable = false; try { reachable = !!f.contentWindow && !!f.contentWindow.document.documentElement; } catch { }
+      if (reachable) continue;
+      foreign.set(f, f.style.getPropertyValue('pointer-events') + '|' + f.style.getPropertyPriority('pointer-events'));
+      f.style.setProperty('pointer-events', 'none', 'important');
+    }
+  }
+  const foreignAt = (x, y) => {
+    for (const f of foreign.keys()) { if (!f.isConnected) continue; const r = f.getBoundingClientRect(); if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return f; }
+    return null;
+  };
+  function unmarkForeign() {
+    for (const [f, v] of foreign) { const [val, prio] = v.split('|'); if (val) f.style.setProperty('pointer-events', val, prio); else f.style.removeProperty('pointer-events'); }
+    foreign.clear();
+  }
+  listenAll(window); markForeign();
+  const frameTimer = setInterval(() => { listenAll(window); markForeign(); }, 1000);
   $('.wider').addEventListener('click', wider);
   $('.narrower').addEventListener('click', narrower);
   go.addEventListener('click', commit);

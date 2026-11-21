@@ -1,4 +1,5 @@
-# Hallow Shield: tests the converter and scriptlets, runs the real extension in Chromium against test pages (sample
+# Hallow Shield: tests the converter, scriptlets, cookie-banner clicker, stats and per-site modes, runs the real
+# extension in Chromium against test pages (sample
 # lists), then builds the rules from the newest lists (uBlock filters, EasyList, EasyPrivacy, Peter Lowe,
 # the cookie-notice and annoyance lists), has Chromium
 # check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, packs the zips,
@@ -39,6 +40,9 @@ jobs:
         run: npm run smoke
       - name: Pack for Chrome / Edge / Brave / Opera and Firefox
         run: npm run package
+      - name: Each zip carries version.json
+        run: |
+          for z in dist/hallow-shield-*.zip; do unzip -p "$z" version.json | tee /dev/stderr | node -e "const v=JSON.parse(require('fs').readFileSync(0,'utf8')); const m=require('./extension/manifest.json'); if (v.version!==m.version||v.dev!==false||!v.built) process.exit(1)"; done
       - name: Lint the Firefox package (addons-linter)
         continue-on-error: true
         run: |
@@ -51,3 +55,10 @@ jobs:
             dist/*.zip
             extension/rules/meta.json
           retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shield-screens
+          path: /tmp/shield-*.png
+          if-no-files-found: ignore
+          retention-days: 7

@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Hallow Shield",
   "short_name": "Shield",
-  "version": "1.2",
-  "description": "Blocks ads, trackers, YouTube ads and cookie banners - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
+  "version": "1.3",
+  "description": "Blocks ads, trackers and YouTube ads, and answers cookie banners with Reject - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
   "icons": {
     "16": "icons/16.png",
     "32": "icons/32.png",
@@ -30,7 +30,11 @@
     "declarativeNetRequest",
     "storage",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "alarms"
+  ],
+  "optional_permissions": [
+    "declarativeNetRequestFeedback"
   ],
   "host_permissions": [
     "<all_urls>"

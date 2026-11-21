@@ -1,12 +1,18 @@
 // Hallow Shield cosmetic content script (isolated world, every frame). It tells Shield's own background script the
 // site's name; the background adds that site's "hide this ad box" CSS and sends back the site's procedural filters
-// (":has-text", ":upward" and friends), which this script applies as the page changes. It reads nothing else and sends
-// nothing anywhere.
+// (":has-text", ":upward" and friends), which this script applies as the page changes. With "Handle cookie banners" on,
+// the reply also carries the cookie list's "click Reject" jobs for this site, run by clicker.js; each click is reported
+// to Shield's background to be counted. It reads nothing else and sends nothing anywhere.
 (() => {
   const ext = globalThis.browser ?? chrome;
   let progs = [];
   const req = ext.runtime.sendMessage({ t: 'cosmetic', host: location.hostname });
-  if (req && req.then) req.then(r => { if (r && r.proc && r.proc.length) start(r.proc); }).catch(() => { });
+  if (req && req.then) req.then(r => {
+    if (r && r.proc && r.proc.length) start(r.proc);
+    if (r && r.clicks && r.clicks.length && globalThis.HallowShieldClicker) {
+      globalThis.HallowShieldClicker.run(r.clicks, { onClick: sel => { try { ext.runtime.sendMessage({ t: 'clicked', host: location.hostname, selector: sel }).catch(() => { }); } catch { } } });
+    }
+  }).catch(() => { });
 
   const reOf = (s, exact) => {
     const m = /^\/(.+)\/([imsu]*)$/.exec(s);

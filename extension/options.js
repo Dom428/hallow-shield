@@ -1,4 +1,5 @@
-// Hallow Shield options page: My filters. Converted here with the same converter as the lists (convert.js via
+// Hallow Shield options page: My filters, Sites (per-site Strict / Off, with Delete) and Stats (from the background,
+// kept in storage.local; "Clear stats"). My filters: Converted here with the same converter as the lists (convert.js via
 // userfilters.js) so every line shows what it became or why it was refused; the background turns the saved text into
 // dynamic rules and hiding CSS. Export / import use a plain text file on this PC - nothing is sent anywhere.
 import { compileUserFilters } from './userfilters.js';
@@ -114,3 +115,86 @@ ext.storage.onChanged.addListener((ch, area) => {
   if (!editing) { box.value = v; render(compile(v)); } else renderZapped();
 });
 render(compile(saved));
+
+// ---- tabs: #filters, #sites, #stats ----
+function showTab() {
+  const t = ['filters', 'sites', 'stats'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'filters';
+  for (const p of document.querySelectorAll('.pane')) p.hidden = p.dataset.pane !== t;
+  for (const a of document.querySelectorAll('.tabs a')) { a.classList.toggle('on', a.dataset.tab === t); a.setAttribute('aria-selected', a.dataset.tab === t); }
+  if (t === 'stats') loadStats();
+  if (t === 'sites') renderSites();
+}
+window.addEventListener('hashchange', showTab);
+
+// ---- Sites: the per-site modes chosen in the popup (Strict / Off), each with Delete (back to Normal) ----
+async function renderSites() {
+  const s = await ext.storage.local.get({ paused: [], strict: [], strictRules: 0, strictError: '' });
+  const rows = [...s.strict.map(d => [d, 'strict']), ...s.paused.map(d => [d, 'off'])].sort((a, b) => a[0] < b[0] ? -1 : 1);
+  $('siteRows').replaceChildren(...rows.map(([d, mode]) => {
+    const tr = document.createElement('tr'); tr.dataset.site = d;
+    const a = document.createElement('td'); a.textContent = d;
+    const b = document.createElement('td'); b.className = 'mode-' + mode; b.textContent = mode === 'strict' ? 'Strict' : 'Off (paused)';
+    const c = document.createElement('td');
+    const del = document.createElement('button'); del.textContent = 'Delete'; del.title = 'Back to Normal on ' + d;
+    del.onclick = async () => {
+      const cur = await ext.storage.local.get({ paused: [], strict: [] });
+      await ext.storage.local.set({ [mode === 'strict' ? 'strict' : 'paused']: cur[mode === 'strict' ? 'strict' : 'paused'].filter(x => x !== d) });
+      renderSites();
+    };
+    c.append(del); tr.append(a, b, c); return tr;
+  }));
+  $('sitesEmpty').hidden = rows.length > 0;
+  $('strictInfo').textContent = s.strict.length ? (s.strictError ? 'The browser refused the Strict rules: ' + s.strictError : `Strict sites use ${s.strictRules} extra rules (pop-up and annoyance lists, limited to those sites).`) : '';
+}
+ext.storage.onChanged.addListener((ch, area) => { if (area === 'local' && (ch.paused || ch.strict || ch.strictRules) && !document.querySelector('[data-pane="sites"]').hidden) renderSites(); });
+
+// ---- Stats ----
+const num = n => n.toLocaleString();
+function renderStats(v) {
+  if (!v || v.error) { $('statsStatus').textContent = 'Couldn\'t read the stats' + (v && v.error ? ': ' + v.error : '.'); return; }
+  $('statsAccess').hidden = v.feedback;
+  $('tBlocked').textContent = num(v.totals.blocked); $('tToday').textContent = num(v.today.blocked);
+  $('tAds').textContent = num(v.totals.ads); $('tTrackers').textContent = num(v.totals.trackers); $('tClicks').textContent = num(v.totals.clicks);
+  // 30 stacked bars (ads, trackers, other), one per day
+  const W = 860, H = 170, padL = 34, padB = 18, padT = 6, bw = (W - padL) / v.days.length;
+  const max = Math.max(1, ...v.days.map(d => d.ads + d.trackers + d.other));
+  const nice = (() => { const p = 10 ** Math.floor(Math.log10(max)); for (const m of [1, 2, 5, 10]) if (m * p >= max) return m * p; return max; })();
+  const y = n => H - padB - (n / nice) * (H - padB - padT);
+  const NS = 'http://www.w3.org/2000/svg', el = (t, a) => { const e = document.createElementNS(NS, t); for (const [k, x] of Object.entries(a)) e.setAttribute(k, x); return e; };
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none' });
+  for (const f of [0, 0.5, 1]) {
+    svg.append(el('line', { x1: padL, x2: W, y1: y(nice * f), y2: y(nice * f), class: 'grid' }));
+    const t = el('text', { x: padL - 4, y: y(nice * f) + 3, 'text-anchor': 'end' }); t.textContent = num(Math.round(nice * f)); svg.append(t);
+  }
+  v.days.forEach((d, i) => {
+    let base = 0;
+    const g = el('g', {}); const title = el('title', {}); title.textContent = `${d.day}: ${num(d.ads)} ads, ${num(d.trackers)} trackers, ${num(d.other)} other, ${num(d.clicks)} cookie banners answered`; g.append(title);
+    for (const k of ['ads', 'trackers', 'other']) {
+      if (!d[k]) continue;
+      const y1 = y(base + d[k]), y0 = y(base);
+      g.append(el('rect', { x: padL + i * bw + 1.5, y: y1, width: Math.max(1, bw - 3), height: Math.max(1, y0 - y1), class: k }));
+      base += d[k];
+    }
+    svg.append(g);
+    if (i % 5 === 4 || i === v.days.length - 1) { const t = el('text', { x: padL + i * bw + bw / 2, y: H - 4, 'text-anchor': 'middle' }); t.textContent = d.label; svg.append(t); }
+  });
+  $('chart').replaceChildren(svg);
+  const list = (id, rows) => $(id).replaceChildren(...rows.map(([k, n]) => { const li = document.createElement('li'); li.textContent = k; const sp = document.createElement('span'); sp.textContent = num(n); li.append(sp); return li; }));
+  list('topSites', v.topSites); list('topDomains', v.topDomains);
+  $('sharedNote').textContent = v.shared ? `${num(v.shared)} more blocked by rules that cover many hosts at once (the host isn't known).` : '';
+  $('statsStatus').textContent = v.source === 'clicks-only' ? 'Only cookie-banner clicks are counted until blocked counts are turned on.' : v.source === 'debug' ? 'Development build: every block is counted as it happens.' : '';
+}
+async function loadStats() { renderStats(await ext.runtime.sendMessage({ t: 'stats-get' })); }
+$('statsRefresh').onclick = loadStats;
+$('statsClear').onclick = async () => {
+  if (!confirm('Clear all of Shield\'s stats? This can\'t be undone.')) return;
+  renderStats(await ext.runtime.sendMessage({ t: 'stats-clear' }));
+  $('statsStatus').textContent = 'Stats cleared.';
+};
+$('statsGrant').onclick = async () => {
+  let ok = false;
+  try { ok = await ext.permissions.request({ permissions: ['declarativeNetRequestFeedback'] }); } catch { }
+  $('statsStatus').textContent = ok ? 'Blocked counts are on: from now on Shield counts what the browser blocks.' : 'Not turned on.';
+  if (ok) loadStats();
+};
+showTab();

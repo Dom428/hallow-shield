@@ -7,7 +7,12 @@
     <div id="site" class="host">-</div>
     <div id="count" class="count">-</div>
     <div id="countText" class="muted">blocked on this page</div>
-    <button id="pause" class="big">Pause on this site</button>
+    <div class="label mode-label">This site</div>
+    <div class="seg" id="mode" role="radiogroup" aria-label="Shield on this site">
+      <button data-mode="strict" role="radio" title="Complete blocking plus annoyances, on this site only">Strict</button>
+      <button data-mode="normal" role="radio" title="Your settings below">Normal</button>
+      <button data-mode="off" role="radio" title="Shield off on this site (the same as Pause)">Off</button>
+    </div>
     <p id="note" class="muted small"></p>
   </section>
   <section class="level">
@@ -21,11 +26,11 @@
     <button id="grant" class="big secondary" hidden>Allow Shield on all sites</button>
   </section>
   <section class="hide">
-    <label class="switch"><input type="checkbox" id="cookies"><span class="knob"></span><span><b>Hide cookie banners</b><br><span class="muted small">Consent pop-ups and cookie notices</span></span></label>
+    <label class="switch"><input type="checkbox" id="cookies"><span class="knob"></span><span><b>Handle cookie banners (reject where possible)</b><br><span class="muted small">Clicks "Reject" where the lists know how, hides the rest</span></span></label>
     <label class="switch"><input type="checkbox" id="annoyances"><span class="knob"></span><span><b>Hide annoyances</b><br><span class="muted small">Newsletter nags, chat bubbles, social widgets</span></span></label>
     <p id="hideNote" class="muted small"></p>
     <button id="pick" class="big secondary">Hide something on this page</button>
-    <div class="row"><button id="zap" class="small-btn">Zap once</button><button id="myfilters" class="small-btn">My filters</button></div>
+    <div class="row"><button id="zap" class="small-btn">Zap once</button><button id="myfilters" class="small-btn">My filters</button><button id="stats" class="small-btn">Stats</button></div>
     <p id="pickNote" class="muted small"></p>
   </section>
   <details id="advanced">

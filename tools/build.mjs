@@ -11,6 +11,7 @@
 //                                   and off as groups from the popup)
 //   cosmetic-meta.json              sites where the lists turn hiding off ($generichide, $elemhide, $specifichide)
 //   js/<scriptlet>.js, scriptlets.json   one MAIN-world bundle per scriptlet (and group) + the sites it's registered on
+//   clicks.json                     the cookie lists' trusted-click-element filters ("click Reject"), run by clicker.js
 //   meta.json                       list versions, counts per ruleset, what was skipped
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +33,7 @@ const sample = args.includes('--sample');
 const given = {};
 for (let i = 0; i < args.length; i++) if (args[i] === '--list') { const [k, v] = args[++i].split('='); given[k] = v; }
 if (sample) Object.assign(given, { easylist: 'test/sample-ads.txt', easyprivacy: 'test/sample-privacy.txt', 'ublock-filters': 'test/sample-ublock.txt',
-  'easylist-cookies': 'test/sample-cookies.txt', 'fanboy-annoyances': 'test/sample-annoyances.txt', ...given });
+  'easylist-cookies': 'test/sample-cookies.txt', 'ublock-cookies': 'test/sample-ublock-cookies.txt', 'fanboy-annoyances': 'test/sample-annoyances.txt', ...given });
 const offline = sample || Object.keys(given).length > 0;
 
 // curl with retries (Node's fetch has crashed mid-download on CI runners)
@@ -154,6 +155,9 @@ fs.writeFileSync(path.join(OUT, 'cosmetic-meta.json'), JSON.stringify({ shards: 
 // 3. scriptlets: one bundle per scriptlet with the sites and arguments it runs with
 const validHost = d => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d);
 const used = {}, skipped = {}, registered = [];
+// the cookie lists' trusted-click-element filters -> rules/clicks.json { args: [[selectors, extraMatch, delay]], hosts: { key: [i] }, exc: { key: [i] (-1 = all) } }
+const CLICK = 'trusted-click-element';
+const clicks = { args: [], index: new Map(), hosts: {}, exc: {} };
 // one group's scriptlet filters -> bundles; the exceptions of every list apply (as in uBO)
 function scriptletGroup(group) {
   const per = {};   // canonical -> { args: [], key->index, hosts: {}, exc: {} }
@@ -163,6 +167,18 @@ function scriptletGroup(group) {
     if (s.group !== group) continue;
     if (s.unsupported) { skipped[s.name] = (skipped[s.name] || 0) + 1; continue; }
     if (s.exception) continue;
+    if (s.canonical === CLICK) {
+      // "click Reject": only the cookie lists' filters, run by Shield's clicker (not a page script)
+      if (group !== 'cookies') { skipped[CLICK + ' (outside the cookie lists)'] = (skipped[CLICK + ' (outside the cookie lists)'] || 0) + 1; continue; }
+      const key = JSON.stringify(s.args.slice(0, 3));
+      if (!clicks.index.has(key)) { clicks.index.set(key, clicks.args.length); clicks.args.push(s.args.slice(0, 3)); }
+      const i = clicks.index.get(key);
+      let any = false;
+      for (const d of s.inc) { if (!validHost(d) && !/^[a-z0-9-]+(.[a-z0-9-]+)*.*$/.test(d)) continue; (clicks.hosts[d] ||= []).includes(i) || clicks.hosts[d].push(i); any = true; }
+      for (const d of s.exc) (clicks.exc[d] ||= []).push(i);
+      if (any) used[CLICK] = (used[CLICK] || 0) + 1; else skipped['(site not expressible) ' + CLICK] = (skipped['(site not expressible) ' + CLICK] || 0) + 1;
+      continue;
+    }
     if (!SCRIPTLETS[s.canonical]) { skipped[s.name] = (skipped[s.name] || 0) + 1; continue; }
     const b = (per[s.canonical] ||= { args: [], index: new Map(), hosts: {}, exc: {} });
     const key = JSON.stringify(s.args);
@@ -176,6 +192,12 @@ function scriptletGroup(group) {
   }
   for (const s of sl) {
     if (!s.exception) continue;
+    if (group === 'cookies' && (!s.name || s.canonical === CLICK)) {
+      // exceptions for the clicker: "#@#+js(trusted-click-element, ...)", or "#@#+js()" (every scriptlet off there)
+      const i = s.name ? clicks.index.get(JSON.stringify(s.args.slice(0, 3))) : -1;
+      if (i !== undefined) for (const d of s.inc) (clicks.exc[d] ||= []).push(i);
+      if (s.name) continue;
+    }
     const targets = s.name ? (per[s.canonical] ? [[s.canonical, per[s.canonical]]] : []) : Object.entries(per);
     for (const [canon, b] of targets) {
       const i = s.name ? b.index.get(JSON.stringify(s.args)) : -1;
@@ -215,7 +237,8 @@ function scriptletGroup(group) {
 }
 for (const g of COSMETIC_GROUPS) scriptletGroup(g);
 fs.writeFileSync(path.join(OUT, 'scriptlets.json'), JSON.stringify(registered));
-meta.scriptlets = { implemented: Object.keys(SCRIPTLETS).length, used, skipped, bundles: registered.length,
+fs.writeFileSync(path.join(OUT, 'clicks.json'), JSON.stringify({ args: clicks.args, hosts: clicks.hosts, exc: clicks.exc }));
+meta.scriptlets = { implemented: Object.keys(SCRIPTLETS).length + 1, used, skipped, bundles: registered.length, clicks: { filters: used[CLICK] || 0, sites: Object.keys(clicks.hosts).length, distinct: clicks.args.length },
   filtersUsed: Object.values(used).reduce((a, b) => a + b, 0), filtersSkipped: Object.values(skipped).reduce((a, b) => a + b, 0) };
 
 // 4. checks and the summary
@@ -234,7 +257,7 @@ meta.skipped = skippedAll;
 fs.writeFileSync(path.join(OUT, 'meta.json'), JSON.stringify(meta, null, 1));
 console.log(`\ncosmetic: ${JSON.stringify(meta.cosmetic)}`);
 for (const [g, v] of Object.entries(meta.groups)) console.log(`group ${g} (${v.on ? 'on' : 'off'} by default): ${v.rules} rules, ${v.bundles} scriptlet bundles, cosmetic ${JSON.stringify(v.cosmetic)}`);
-console.log(`scriptlets: ${meta.scriptlets.filtersUsed} filters in ${registered.length} bundles; skipped ${meta.scriptlets.filtersSkipped}:`, skipped);
+console.log(`scriptlets: ${meta.scriptlets.filtersUsed} filters in ${registered.length} bundles (+ ${meta.scriptlets.clicks.filters} cookie-banner click filters for ${meta.scriptlets.clicks.sites} sites); skipped ${meta.scriptlets.filtersSkipped}:`, skipped);
 console.log(`total ${meta.total} rules (${regexTotal} regex); default lists ${meta.defaultOn}; every list ${meta.allLists}; enabled at install ${meta.enabledAtInstall} (guaranteed ${GUARANTEED})`);
 console.log('skipped filters:', Object.entries(skippedAll).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => `${k}: ${v}`).join(', '));
 if (!sample) {

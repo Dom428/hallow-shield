@@ -1,7 +1,10 @@
 // Hallow Shield: small helpers shared by the background, the popup, the build and the tests.
-// dynamic rule ids: 1.. the dynamic fallback (lists without room), PAUSE_BASE.. paused sites, USER_BASE.. My filters
+// dynamic rule ids: 1.. the dynamic fallback (lists without room), PAUSE_BASE.. paused sites, USER_BASE.. My filters,
+// STRICT_BASE.. the extra rules for sites set to Strict
 export const PAUSE_BASE = 1000000;
 export const USER_BASE = 2000000;
+export const STRICT_BASE = 3000000;
+export const STRICT_MAX = 5000;      // dynamic rules for Strict sites (pop-up hosts + the annoyance lists' rules, limited to those sites)
 export const USER_MAX = 2000;        // network rules from My filters (dynamic rules; the fallback leaves room for them)
 export const USER_REGEX_MAX = 50;
 export const PAUSE_PRIORITY = 1000;   // above every list rule, $important included: a paused site gets everything
@@ -58,6 +61,35 @@ export const validDomain = d => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d);
 export const patternsFor = domains => domains.filter(validDomain).map(d => `*://*.${d}/*`);
 // the popup's group switches: cookie banners hidden unless switched off, other annoyances only when switched on
 export const groupOn = (s, g) => g === 'main' || !g ? true : g === 'cookies' ? s.cookies !== false : g === 'annoyances' ? s.annoyances === true : false;
+// per-site mode: "off" (= paused), "strict" (Complete + annoyances on that site only) or "normal" (the global settings)
+export function siteModeOf(s, host) {
+  if (!host) return 'normal';
+  if (onList(host, s.paused || [])) return 'off';
+  if (onList(host, s.strict || [])) return 'strict';
+  return 'normal';
+}
+// the new paused / strict lists after choosing a mode for a site
+export function withSiteMode(s, site, mode) {
+  const paused = (s.paused || []).filter(d => d !== site), strict = (s.strict || []).filter(d => d !== site);
+  if (mode === 'off') paused.push(site);
+  if (mode === 'strict') strict.push(site);
+  return { paused: paused.slice(-500), strict: strict.slice(-500) };
+}
+const within = (a, b) => a === b || a.endsWith('.' + b);
+// a list rule for Strict sites only: its initiator sites narrowed to those sites (null if it can't apply there, or is a
+// kind that would eat into the browser's smaller budgets: regex, redirect, header rules)
+export function strictRule(rule, sites, id) {
+  const c = rule.condition || {}, t = rule.action && rule.action.type;
+  if (!sites.length || c.regexFilter || !['block', 'allow', 'allowAllRequests', 'upgradeScheme'].includes(t)) return null;
+  let init = sites;
+  if (c.initiatorDomains) {
+    init = [...new Set([...c.initiatorDomains.filter(d => sites.some(s => within(d, s))), ...sites.filter(s => c.initiatorDomains.some(d => within(s, d)))])];
+    if (!init.length) return null;
+  }
+  if (c.excludedInitiatorDomains) init = init.filter(s => !c.excludedInitiatorDomains.some(d => within(s, d)));
+  if (!init.length) return null;
+  return { ...rule, id, condition: { ...c, initiatorDomains: init } };
+}
 // which rulesets should be on: every list unless switched off in Advanced (a list in a group only while its group is
 // on), plus strict pop-up blocking at "Complete"
 export function wantedRulesets(s, listIds, groupOf = {}) {

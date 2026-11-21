@@ -1,0 +1,12 @@
+! Title: Hallow Shield test cookie-notice list, uBlock style (written for the tests - not uBlock filters - Cookie notices)
+! Version: test-1
+! "click Reject" filters for Shield's clicker (trusted-click-element)
+clicker.test##+js(trusted-click-element, #cmp .reject-all)
+sub.clicker.test#@#+js(trusted-click-element, #cmp .reject-all)
+chain.test##+js(trusted-click-element, #cmp-settings\, #cmp-panel .necessary-only, , 150)
+shadow.test##+js(trusted-click-element, #cmp-host >>> button.reject)
+extra.test##+js(trusted-click-element, #cmp .reject-all, !cookie:consent_given)
+frames.test##+js(trusted-click-element, #cmp .reject-all)
+cookie.*##+js(trusted-click-element, #cmp .reject-all)
+! a scriptlet Shield doesn't have (stays skipped)
+clicker.test##+js(no-such-scriptlet-in-shield, 1)
