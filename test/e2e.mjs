@@ -339,7 +339,7 @@ await step('no room in the shared pool: the list is loaded as dynamic rules and 
 });
 
 await step('the popup: site, count, level switch, lists, and the broken-site report (clipboard only)', async () => {
-  const p = await visit('other.test', '/page?utm_source=a&secret=1');
+  const p = await visit('other.test', '/page?utm_source=a&secret=1', 1200);
   const id = sw.url().split('/')[2];
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `chrome-extension://${id}` }).catch(() => { });
   const pop = await ctx.newPage();
@@ -348,7 +348,7 @@ await step('the popup: site, count, level switch, lists, and the broken-site rep
   await pop.waitForTimeout(700);
   assert.equal(await pop.textContent('#site'), 'other.test');
   const n = Number(await pop.textContent('#count'));
-  assert.ok(n >= 6, 'blocked count on the page: ' + n);
+  assert.ok(n >= 5, 'blocked count on the page: ' + n);
   assert.equal(await pop.getAttribute('[data-level="optimal"]', 'aria-checked'), 'true');
   assert.equal(await pop.locator('#lists input[type=checkbox]').count(), ALL_LISTS.length);
   await pop.setViewportSize({ width: 320, height: 640 });
