@@ -37,7 +37,7 @@ const YT = `<!doctype html><html><head><title>video</title></head><body><div id=
     result.initialAds = !!(ytInitialPlayerResponse.adPlacements || ytInitialPlayerResponse.playerAds || ytInitialPlayerResponse.adSlots);
     result.initialVideo = ytInitialPlayerResponse.videoDetails && ytInitialPlayerResponse.videoDetails.videoId;
     fetch('/youtubei/v1/player?prettyPrint=false', { method: 'POST', body: '{"videoId":"abc"}' }).then(r => r.json()).then(j => {
-      result.fetchAds = !!(j.adPlacements || j.playerAds || j.adSlots); result.fetchVideo = j.videoDetails && j.videoDetails.videoId;
+      result.fetchAds = !!(j.adPlacements || j.adSlots); result.fetchPlayerAds = !!j.playerAds; result.fetchVideo = j.videoDetails && j.videoDetails.videoId;
       document.getElementById('player').textContent = 'playing ' + result.fetchVideo;
     }).catch(e => { result.fetchError = String(e); });
   </script></body></html>`;
@@ -113,7 +113,7 @@ await y.goto('http://www.youtube.com/watch?v=abc'); await y.waitForTimeout(1500)
 const r = await y.evaluate(() => window.result);
 console.log('fake YouTube with the real filters:', JSON.stringify(r), errors.length ? 'page errors: ' + errors.join(' | ') : '');
 assert.equal(r.initialAds, false, 'ytInitialPlayerResponse ad fields removed'); assert.equal(r.initialVideo, 'abc');
-assert.equal(r.fetchAds, false, '/youtubei/v1/player ad fields removed'); assert.equal(r.fetchVideo, 'abc');
+assert.equal(r.fetchAds, false, '/youtubei/v1/player adPlacements and adSlots removed (the uBO filters leave playerAds on www.youtube.com)'); assert.equal(r.fetchVideo, 'abc');
 assert.equal(await y.textContent('#player'), 'playing abc');
 await y.close();
 await ctx.close(); server.close();
