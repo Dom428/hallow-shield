@@ -34,7 +34,7 @@ namespace HallowShieldBridge
 
     public static class Bridge
     {
-        public const string Version = "1.6";
+        public const string Version = "1.7";
         public const string HostName = "com.hallow.shield";
         public const string ChromeId = "afghaliocnljjjegfnaonfghpjgpebni";        // from the "key" in Shield's manifest.json
         public const string FirefoxId = "hallow-shield@dom428.github.io";

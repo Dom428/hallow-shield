@@ -64,6 +64,9 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
 - **Blocking: Basic / Optimal / Complete,** like uBO Lite. *Basic* blocks requests only and runs nothing in pages.
   *Optimal* (the default) adds ad-box hiding and the page fixes on the sites Shield may access. *Complete* adds strict
   blocking of pop-up and pop-under ad sites.
+- **Light and dark mode** (new in 1.7): the popup, the options page and the element picker / zapper follow your
+  browser's (or Windows') light or dark setting by themselves - the Hallow family's light palette (soft lilac-white
+  panels, dark text, a darker orange for text so it stays easy to read) or the dark look Shield always had.
 - **Share counts with Hallow apps on this PC** (new in 1.6, options page > Stats, off by default): Hallow Hub and
   Hallow Remote can show how much Shield blocked today and this week. See [Hallow family](#hallow-family) below.
 - **Try fixing this site** (new in 1.5, offered after **Report a broken site**): Shield steps the site through
@@ -79,7 +82,7 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
 ## Install
 
 Download the zip for your browser from the [latest release](https://github.com/Dom428/hallow-shield/releases/latest)
-(`hallow-shield-chrome-1.6.zip` or `hallow-shield-firefox-1.6.zip`) and unzip it into a folder of its own - or let
+(`hallow-shield-chrome-1.7.zip` or `hallow-shield-firefox-1.7.zip`) and unzip it into a folder of its own - or let
 [Hallow Setup](https://github.com/Dom428/hallow-setup) 1.6+ do it (it checks GitHub's checksum and keeps the folder up to
 date; 1.8+ also registers the Hallow family bridge). Each zip has a `version.json` with its version and build date.
 
@@ -122,8 +125,8 @@ popup. Hallow Hub and Hallow Remote read what it writes.
   swapped in, so a reader never sees half of it), one entry per browser and profile:
 
   ```json
-  {"version":"1.6","updated":"2026-11-21T15:04:05Z",
-   "browsers":[{"name":"Chrome","profile":"Default","version":"1.6","level":"optimal","blockedToday":123,
+  {"version":"1.7","updated":"2026-11-21T15:04:05Z",
+   "browsers":[{"name":"Chrome","profile":"Default","version":"1.7","level":"optimal","blockedToday":123,
                 "blockedWeek":4567,"bannersToday":3,"updated":"2026-11-21T15:04:05Z","day":"2026-11-21","id":"3f9a0c1d2b4e5f60"}],
    "blockedToday":123,"blockedWeek":4567,"bannersToday":3}
   ```

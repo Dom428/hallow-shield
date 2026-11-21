@@ -98,7 +98,7 @@ namespace HallowShieldBridge
             Eq(l.First(x => x.Id == "aaa").Profile, "Default", "merge: profile name kept");
             var json = Bridge.Render(l, T0.AddMinutes(1));
             Ok(json.Contains("\"blockedToday\":32,") && json.Contains("\"blockedWeek\":230,") && json.EndsWith("\"bannersToday\":5}"), "merge: sums " + json);
-            Ok(json.StartsWith("{\"version\":\"1.6\",\"updated\":\""), "render: starts like the spec");
+            Ok(json.StartsWith("{\"version\":\"" + Bridge.Version + "\",\"updated\":\""), "render: starts like the spec");
             // round trip through the file format
             var p = Path.Combine(Path.GetTempPath(), "hsb-rt-" + Guid.NewGuid().ToString("N") + ".json");
             try { File.WriteAllText(p, json); var back = Bridge.Load(p); Eq(back.Count, 3, "load: entries back"); Eq(Bridge.Render(back, T0.AddMinutes(1)), json, "load: round trip"); }
@@ -123,7 +123,7 @@ namespace HallowShieldBridge
             var allOff = Bridge.Render(new List<Entry> { E("Firefox", "off", null, null, null, now) }, now);
             Ok(allOff.EndsWith("\"blockedToday\":null,\"blockedWeek\":null,\"bannersToday\":null}"), "stale: no counts anywhere -> null sums");
             var none = Bridge.Render(new List<Entry>(), now);
-            Eq(none, "{\"version\":\"1.6\",\"updated\":\"" + Bridge.Iso(now) + "\",\"browsers\":[],\"blockedToday\":null,\"blockedWeek\":null,\"bannersToday\":null}", "render: empty");
+            Eq(none, "{\"version\":\"" + Bridge.Version + "\",\"updated\":\"" + Bridge.Iso(now) + "\",\"browsers\":[],\"blockedToday\":null,\"blockedWeek\":null,\"bannersToday\":null}", "render: empty");
         }
 
         static void Atomic()

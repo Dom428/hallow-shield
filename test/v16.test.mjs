@@ -96,7 +96,7 @@ test('the options page has the switch, off by default, and says what is shared',
   assert.match(html, /Never an address, a site or your history/);
 });
 
-test('the version is 1.6 everywhere', () => {
+test('the version is the same everywhere (1.6+)', () => {
   const pkg = JSON.parse(read('../package.json'));
-  assert.equal(mf.version, '1.6'); assert.equal(pkg.version, '1.6.0');
+  assert.equal(pkg.version, mf.version + '.0'); assert.ok(Number(mf.version.split('.')[1]) >= 6);
 });

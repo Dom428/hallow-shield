@@ -110,7 +110,7 @@ try {
     });
     if (WIN) {
       const s = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
-      assert.equal(s.version, '1.6'); assert.ok(Array.isArray(s.browsers) && s.browsers.length === 1, JSON.stringify(s));
+      assert.equal(s.version, mf.version); assert.ok(Array.isArray(s.browsers) && s.browsers.length === 1, JSON.stringify(s));
       const b = s.browsers[0];
       assert.equal(b.level, 'optimal'); assert.equal(b.version, mf.version); assert.equal(b.profile, 'Default');
       assert.ok(['Chrome', 'Chromium'].includes(b.name), b.name);

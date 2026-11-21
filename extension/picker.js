@@ -18,19 +18,24 @@
   host.style.cssText = 'all:initial!important;position:fixed!important;inset:0 auto auto 0!important;width:0!important;height:0!important;z-index:2147483647!important;display:block!important;';
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = `<style>
-    :host { all: initial; }
+    :host { all: initial; --bg: #14101b; --panel: #1f1929; --line: #3a3248; --text: #ece8f4; --muted: #a59cb6; --accent: #f07820; --accent-text: #f07820;
+      --on-accent: #14101b; --panel2: #3a3248; --shadow: 0 8px 28px rgba(0,0,0,.45); color-scheme: dark; }
+    @media (prefers-color-scheme: light) {
+      :host { --bg: #F6F4FA; --panel: #FFFFFF; --line: #DAD3E6; --text: #1E1A26; --muted: #6B6478; --accent-text: #B5540C; --panel2: #EEEAF5;
+        --shadow: 0 6px 20px rgba(30,26,38,.16); color-scheme: light; }
+    }
     * { box-sizing: border-box; font: 13px "Segoe UI", system-ui, sans-serif; }
-    .box { position: fixed; pointer-events: none; border: 2px solid #f07820; background: rgba(240, 120, 32, .18); border-radius: 3px; display: none; z-index: 2; }
-    .bar { position: fixed; right: 16px; bottom: 16px; width: 380px; max-width: calc(100vw - 32px); padding: 10px 12px; background: #1f1929; color: #ece8f4;
-      border: 1px solid #3a3248; border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.45); z-index: 3; }
-    .title { font-weight: 600; margin-bottom: 6px; } .title b { color: #f07820; }
-    .sel { font: 12px Consolas, monospace; background: #14101b; border: 1px solid #3a3248; border-radius: 6px; padding: 5px 7px; word-break: break-all; min-height: 26px; }
-    .n { color: #a59cb6; font-size: 11.5px; margin-top: 4px; }
+    .box { position: fixed; pointer-events: none; border: 2px solid var(--accent-text); background: rgba(240, 120, 32, .18); border-radius: 3px; display: none; z-index: 2; }
+    .bar { position: fixed; right: 16px; bottom: 16px; width: 380px; max-width: calc(100vw - 32px); padding: 10px 12px; background: var(--panel); color: var(--text);
+      border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); z-index: 3; }
+    .title { font-weight: 600; margin-bottom: 6px; } .title b { color: var(--accent-text); }
+    .sel { font: 12px Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; word-break: break-all; min-height: 26px; }
+    .n { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
     .row { display: flex; gap: 6px; margin-top: 8px; }
-    button { flex: 1; padding: 6px 4px; border: 0; border-radius: 7px; background: #3a3248; color: #ece8f4; cursor: pointer; font-weight: 600; }
-    button.go { background: #f07820; color: #14101b; }
+    button { flex: 1; padding: 6px 4px; border: 0; border-radius: 7px; background: var(--panel2); color: var(--text); cursor: pointer; font-weight: 600; }
+    button.go { background: var(--accent); color: var(--on-accent); }
     button:disabled { opacity: .5; cursor: default; }
-    .hint { color: #a59cb6; font-size: 11px; margin-top: 6px; }
+    .hint { color: var(--muted); font-size: 11px; margin-top: 6px; } .hint .verb { font-size: inherit; }
   </style>
   <div class="box"></div>
   <div class="bar" role="dialog" aria-label="Hallow Shield element picker">
