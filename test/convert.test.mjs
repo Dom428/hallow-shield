@@ -67,6 +67,10 @@ test('regex filters: RE2-compatible ones become regexFilter, the rest are skippe
   const r = networkRule('/^https?:\\/\\/regex\\.example\\/banner\\d+\\.png/$image').rule;
   assert.equal(r.condition.regexFilter, '^https?:\\/\\/regex\\.example\\/banner\\d+\\.png'); assert.deepEqual(r.condition.resourceTypes, ['image']);
   assert.ok(ruleMatches(r, req('http://regex.example/banner12.png', 'https://news.test/', 'image')));
+  assert.equal(networkRule('/loader.min.js$xhr,script,domain=a.test,replace=/x\\)/y/').skip, 'option replace', 'starts and ends with / but is not a regex filter');
+  assert.equal(networkRule('/ads/banner.js$script,domain=a.test').rule.condition.urlFilter, '/ads/banner.js');
+  assert.equal(networkRule('/^https:\\/\\/x\\.example\\/$/').rule.condition.regexFilter, '^https:\\/\\/x\\.example\\/$', 'a regex ending in $');
+  assert.equal(networkRule('/x\\.example\\/ad$/$script').rule.condition.regexFilter, 'x\\.example\\/ad$');
   assert.equal(networkRule('/ad(?=s)/').skip, 'regex unsupported', 'look-ahead');
   assert.equal(networkRule('/(a)\\1/').skip, 'regex unsupported', 'back-reference');
   const many = Array.from({ length: 5 }, (_, i) => `/^https:\\/\\/r${i}\\.example\\//`).join('\n');

@@ -31,7 +31,7 @@ export function ruleMatches(rule, req) {
   if (!types.includes(req.type)) return false;
   if (c.excludedResourceTypes && c.excludedResourceTypes.includes(req.type)) return false;
   if (c.urlFilter && !urlFilterRegex(c.urlFilter, !!c.isUrlFilterCaseSensitive).test(req.url)) return false;
-  if (c.regexFilter && !new RegExp(c.regexFilter, c.isUrlFilterCaseSensitive ? '' : 'i').test(req.url)) return false;
+  if (c.regexFilter) { let re; try { re = new RegExp(c.regexFilter, c.isUrlFilterCaseSensitive ? '' : 'i'); } catch { return false; } if (!re.test(req.url)) return false; }
   if (c.requestDomains && !onDomain(host, c.requestDomains)) return false;
   if (c.excludedRequestDomains && onDomain(host, c.excludedRequestDomains)) return false;
   if (c.initiatorDomains && !(ini && onDomain(ini, c.initiatorDomains))) return false;

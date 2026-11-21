@@ -24,18 +24,30 @@ const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.t
   headless: true, channel: 'chromium', args: [`--disable-extensions-except=${PROBE}`, `--load-extension=${PROBE}`],
 });
 const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 60000 });
+// a case-insensitive regex needs far more of RE2's memory: one the browser refuses for memory gets a second try as
+// case-sensitive (web addresses are lowercase in practice, so it still matches what it should)
 const answers = await sw.evaluate(async list => {
   const out = [];
-  for (const r of list) out.push(await chrome.declarativeNetRequest.isRegexSupported({ regex: r.regex, isCaseSensitive: r.cs }));
+  for (const r of list) {
+    let a = await chrome.declarativeNetRequest.isRegexSupported({ regex: r.regex, isCaseSensitive: r.cs });
+    if (!a.isSupported && a.reason === 'memoryLimitExceeded' && !r.cs) {
+      const b = await chrome.declarativeNetRequest.isRegexSupported({ regex: r.regex, isCaseSensitive: true });
+      if (b.isSupported) a = { isSupported: true, caseSensitive: true };
+    }
+    out.push(a);
+  }
   return out;
 }, regexes);
 await ctx.close();
 
 const bad = regexes.map((r, i) => ({ ...r, ok: answers[i].isSupported, reason: answers[i].reason })).filter(r => !r.ok);
+const makeCs = new Set(regexes.filter((r, i) => answers[i].caseSensitive).map(r => r.id + '#' + r.rule));
+console.log(`${makeCs.size} regex rules kept as case-sensitive (too big for the browser case-insensitive)`);
 for (const id of sets) {
   const drop = new Set(bad.filter(b => b.id === id).map(b => b.rule));
-  if (!drop.size) continue;
+  if (!drop.size && ![...makeCs].some(k => k.startsWith(id + '#'))) continue;
   const rules = JSON.parse(fs.readFileSync(path.join(RULES, id + '.json'), 'utf8')).filter(r => !drop.has(r.id));
+  for (const r of rules) if (makeCs.has(id + '#' + r.id)) r.condition.isUrlFilterCaseSensitive = true;
   fs.writeFileSync(path.join(RULES, id + '.json'), JSON.stringify(rules));
   meta.rulesets[id].rules = rules.length;
   meta.rulesets[id].regex = rules.filter(r => r.condition.regexFilter).length;

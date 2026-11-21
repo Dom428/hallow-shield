@@ -61,12 +61,13 @@ function splitOptions(s) {
   out.push(cur); return out.map(x => x.trim()).filter(Boolean);
 }
 // pattern and options: the options start at the last "$" that isn't inside a regex body
+// (the rightmost "$" followed by something shaped like an option: "/ad.js$xhr,replace=/a/b/" is not a regex filter,
+// "/^https:\/\/x\/$/" is one, "/x$/$script" is a regex with options)
 function splitFilter(text) {
-  if (/^\/.*\/$/.test(text)) return [text, ''];
-  if (text.startsWith('/')) { const end = text.lastIndexOf('/$'); if (end > 0) return [text.slice(0, end + 1), text.slice(end + 2)]; }
-  const i = text.lastIndexOf('$');
-  if (i < 0) return [text, ''];
-  return [text.slice(0, i), text.slice(i + 1)];
+  for (let i = text.lastIndexOf('$'); i >= 0; i = i > 0 ? text.lastIndexOf('$', i - 1) : -1) {
+    if (/^~?[a-z0-9_-]+(?:=|,|$)/i.test(text.slice(i + 1))) return [text.slice(0, i), text.slice(i + 1)];
+  }
+  return [text, ''];
 }
 // a filter as text, normalized, so $badfilter can name it: options lowercased and sorted, the badfilter option removed
 export function filterKey(line) {
