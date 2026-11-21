@@ -15,10 +15,15 @@ const sets = Object.keys(meta.rulesets);
 const regexes = [];
 for (const id of sets) for (const r of JSON.parse(fs.readFileSync(path.join(RULES, id + '.json'), 'utf8'))) if (r.condition.regexFilter) regexes.push({ id, rule: r.id, regex: r.condition.regexFilter, cs: !!r.condition.isUrlFilterCaseSensitive });
 
+// a tiny probe extension asks the browser (Chrome refuses to load an extension whose static rules hold a regex RE2
+// can't parse, so Shield itself can't be the one to ask)
+const PROBE = fs.mkdtempSync(path.join(os.tmpdir(), 'shield-re-probe-'));
+fs.writeFileSync(path.join(PROBE, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'regex probe', version: '1', permissions: ['declarativeNetRequest'], background: { service_worker: 'sw.js' } }));
+fs.writeFileSync(path.join(PROBE, 'sw.js'), '// probe\n');
 const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'shield-re-')), {
-  headless: true, channel: 'chromium', args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--enable-logging=stderr', '--v=0'],
+  headless: true, channel: 'chromium', args: [`--disable-extensions-except=${PROBE}`, `--load-extension=${PROBE}`],
 });
-const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 120000 }).catch(async e => { const p = await ctx.newPage(); await p.goto('chrome://extensions-internals').catch(() => { }); console.log((await p.textContent('body').catch(() => '')).slice(0, 4000)); throw e; });
+const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 60000 });
 const answers = await sw.evaluate(async list => {
   const out = [];
   for (const r of list) out.push(await chrome.declarativeNetRequest.isRegexSupported({ regex: r.regex, isCaseSensitive: r.cs }));

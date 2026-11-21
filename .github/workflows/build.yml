@@ -31,9 +31,7 @@ jobs:
       - name: Rules from the newest lists
         run: npm run rules
       - name: Chromium checks every regex rule
-        env:
-          DEBUG: pw:browser
-        run: npm run regex 2>&1 | grep -v "^s*$" | grep -iE "extension|rule|manifest|error|warn|regex|refused|kept" | head -200; exit ${PIPESTATUS[0]}
+        run: npm run regex
       - name: Explain doubleclick gpt.js
         run: node tools/explain.mjs http://securepubads.g.doubleclick.net/tag/js/gpt.js http://news.example.org/page script
       - name: Chromium loads the real rules, blocks real ad servers, real YouTube filters on a fake page

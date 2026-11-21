@@ -1,10 +1,26 @@
-Hallow Shield's blocking rules (rules/*.json, rules/generic.css, rules/sites.json) are converted from:
+Hallow Shield's blocking rules, cosmetic filters and scriptlet data (everything in rules/) are converted from these
+filter lists. The lists are data with their own licenses; Hallow Shield's code is its own.
 
-  EasyList     https://easylist.to/   by The EasyList authors
-  EasyPrivacy  https://easylist.to/   by The EasyList authors
+  uBlock filters, uBlock filters - Badware risks, - Privacy, - Unbreak, - Quick fixes
+      https://github.com/uBlockOrigin/uAssets   by Raymond Hill and the uBlock Origin contributors
+      License: GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html)
 
-The EasyList filter lists are dual licensed under the GNU General Public License version 3 and the Creative Commons
-Attribution-ShareAlike 3.0 Unported license (https://creativecommons.org/licenses/by-sa/3.0/). The converted rule
-files are shared under the same Creative Commons Attribution-ShareAlike 3.0 license. They were changed: converted to the
-browser's declarativeNetRequest format and CSS, and filters the browser can't use were left out.
-rules/meta.json names the list versions used.
+  EasyList, EasyPrivacy
+      https://easylist.to/   by The EasyList authors
+      License: dual licensed under the GNU General Public License version 3 and the Creative Commons
+      Attribution-ShareAlike 3.0 Unported license (https://creativecommons.org/licenses/by-sa/3.0/)
+
+  Peter Lowe's Ad and tracking server list
+      https://pgl.yoyo.org/adservers/   by Peter Lowe
+      License: McRae General Public License (version 4.r53) - see the list's own page; free to use and redistribute
+      with credit.
+
+The converted files are shared under the same terms as the lists they come from (for the EasyList-derived parts:
+Creative Commons Attribution-ShareAlike 3.0). They were changed: converted to the browser's declarativeNetRequest
+format, CSS, JSON programs for procedural filters and arguments for Shield's own scriptlets; filters the browser
+can't use were left out. rules/meta.json names the list versions used and what was left out.
+
+The approach (static rulesets, merged host rules, scriptlets registered per site in the page's world) follows
+uBlock Origin Lite (https://github.com/uBlockOrigin/uBOL-home, GPLv3). No uBlock Origin or uBlock Origin Lite code is
+included: the converter, the scriptlets, the procedural filter engine and the redirect stand-ins in web/ are Hallow
+Shield's own.
