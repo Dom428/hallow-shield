@@ -338,18 +338,22 @@ export const SCRIPTLET_ALIASES = {
 
 // scriptlet arguments: comma separated, "\," is a literal comma, an argument may be quoted
 export function splitArgs(s) {
-  const out = []; let cur = '', quote = null, started = false;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (!quote && ch === '\\' && s[i + 1] === ',') { cur += ','; i++; started = true; continue; }
-    if (!started && !quote && (ch === '"' || ch === "'" || ch === '`')) { quote = ch; started = true; continue; }
-    if (quote && ch === '\\' && s[i + 1] === quote) { cur += quote; i++; continue; }
-    if (quote && ch === quote) { quote = null; continue; }
-    if (!quote && ch === ',') { out.push(cur.trim()); cur = ''; started = false; continue; }
-    if (!quote && !started && ch === ' ') continue;
-    started = true; cur += ch;
+  const out = []; let i = 0;
+  while (i <= s.length) {
+    while (s[i] === ' ') i++;
+    const q = s[i];
+    if (q === '"' || q === "'" || q === '`') {
+      // a quoted argument: up to the matching quote, if only spaces follow before the next comma (or the end)
+      let j = i + 1, v = '';
+      for (; j < s.length; j++) { if (s[j] === '\\' && s[j + 1] === q) { v += q; j++; continue; } if (s[j] === q) break; v += s[j]; }
+      let k = j + 1; while (s[k] === ' ') k++;
+      if (j < s.length && (k >= s.length || s[k] === ',')) { out.push(v); i = k + 1; if (k >= s.length) break; continue; }
+    }
+    let v = '';
+    for (; i < s.length; i++) { if (s[i] === '\\' && s[i + 1] === ',') { v += ','; i++; continue; } if (s[i] === ',') break; v += s[i]; }
+    out.push(v.trim()); i++;
+    if (i > s.length) break;
   }
-  out.push(quote ? cur : cur.trim());
   return out;
 }
 

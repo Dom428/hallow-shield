@@ -40,7 +40,7 @@ const COMMON = `
   <script src="http://other3p.example/x.js"></script>
   <img src="http://regex.example/banner12.png"><img src="http://regex.example/other.png">
   <script src="http://redirect.example/gpt.js"></script>
-  <img src="http://fine.example/p.gif?utm_source=x&keep=1&fbclid=2">
+  <script>fetch("http://fine.example/p.json?utm_source=x&keep=1&fbclid=2").catch(() => { });</script>
   <script src="http://important.example/x.js"></script>
   <script src="http://cancelled.example/x.js"></script>
   <script src="http://mv3only.example/x.js"></script>
@@ -156,7 +156,7 @@ await step('network: blocks, exceptions, regex, redirect to a stand-in, $importa
 
 await step('$removeparam: tracking parameters are stripped from requests and from the page address', async () => {
   let p = await visit('other.test');
-  assert.ok(got('fine.example/p.gif?keep=1'), 'image request without utm_source / fbclid: ' + seen.filter(s => s.includes('p.gif')).join(' '));
+  assert.ok(got('fine.example/p.json?keep=1'), 'fetch without utm_source / fbclid: ' + seen.filter(s => s.includes('p.json')).join(' '));
   await p.close();
   p = await visit('other.test', '/page?utm_source=mail&x=1');
   assert.ok(got('other.test/page?x=1'), 'page address: ' + seen.filter(s => s.startsWith('other.test/page')).join(' '));
@@ -255,6 +255,13 @@ await step('fake YouTube page: no ad fields in the initial data, the player API 
 
 await step('a $document exception lets a whole site load everything', async () => {
   const p = await visit('trusted.example');
+  if (!got('ads.example/ad.js')) {
+    const tabId = await sw.evaluate(async () => (await chrome.tabs.query({ url: '*://trusted.example/*' }))[0].id);
+    console.log('     matched:', JSON.stringify(await sw.evaluate(t => chrome.declarativeNetRequest.getMatchedRules({ tabId: t }), tabId)));
+    console.log('     main frame:', JSON.stringify(await sw.evaluate(() => chrome.declarativeNetRequest.testMatchOutcome({ url: 'http://trusted.example/page', type: 'main_frame' }))));
+    console.log('     ad.js:', JSON.stringify(await sw.evaluate(() => chrome.declarativeNetRequest.testMatchOutcome({ url: 'http://ads.example/ad.js', type: 'script', initiator: 'http://trusted.example', tabId: -1 }))));
+    console.log('     seen:', seen.join(' '));
+  }
   assert.ok(got('ads.example/ad.js'), 'nothing blocked on trusted.example');
   await p.close();
 });
@@ -313,7 +320,7 @@ await step('no room in the shared pool: the list is loaded as dynamic rules and 
   assert.ok(!got('regex.example/banner12.png'), 'regex rule (dynamic)');
   assert.ok(!gotAny('redirect.example') && await p.evaluate(() => window.gptStub), 'redirect (dynamic)');
   assert.ok(!gotAny('important.example'), '$important (dynamic)');
-  assert.ok(got('fine.example/p.gif?keep=1'), 'removeparam (dynamic)');
+  assert.ok(got('fine.example/p.json?keep=1'), 'removeparam (dynamic)');
   await p.close();
   await set({ debugNoRoom: [] });
   await until(async () => (await enabled()).includes('ublock-filters'), 5000, 'static set back');
@@ -340,11 +347,12 @@ await step('the popup: site, count, level switch, lists, and the broken-site rep
   await pop.waitForTimeout(300);
   const note = await pop.textContent('#reportNote');
   assert.ok(note.length > 0, 'report note shown');
-  if (note.startsWith('Copied')) {
-    const clip = await pop.evaluate(() => navigator.clipboard.readText());
+  {
+    const clip = await pop.evaluate(() => window.shieldReport);
+    console.log('     clipboard: ' + note);
     assert.match(clip, /Page: http:\/\/other\.test\/page\n/); assert.doesNotMatch(clip, /secret/, 'no query string in the report');
     console.log('     report:\n       ' + clip.split('\n').join('\n       '));
-  } else console.log('     (clipboard not available in this browser: ' + note + ')');
+  }
   assert.equal(seen.length, 0, 'the report sent nothing');
   await pop.click('[data-level="complete"]');
   await until(async () => (await sw.evaluate(async () => (await chrome.storage.local.get('level')).level)) === 'complete', 3000, 'level from the popup');

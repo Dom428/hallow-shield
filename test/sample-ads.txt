@@ -5,7 +5,7 @@
 ||tracker-ads.test/banner/*$image,third-party
 /adserver/script.js$script
 ||popups.example^$popup
-/^https?:\/\/regex\.example\//
+/^https?:\/\/regex2\.example\//
 ||cdn.example/ad-$~image
 @@||ads.example/allowed.js$script
 @@||trusted.example^$document

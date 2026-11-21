@@ -177,6 +177,8 @@ test('scriptlet arguments: commas, escapes, quotes', () => {
   assert.deepEqual(splitArgs('nostif, a\\, b, 100'), ['nostif', 'a, b', '100']);
   assert.deepEqual(splitArgs(`trusted-replace-fetch-response, '"a", "b"', '', /player/`), ['trusted-replace-fetch-response', '"a", "b"', '', '/player/']);
   assert.deepEqual(splitArgs('json-prune-fetch-response, a b, , propsToMatch, /p?'), ['json-prune-fetch-response', 'a b', '', 'propsToMatch', '/p?']);
+  assert.deepEqual(splitArgs('x, /"a":"[^"]*"/, "a":"", /p/'), ['x', '/"a":"[^"]*"/', '"a":""', '/p/'], 'a quote only counts when it wraps the whole argument');
+  assert.deepEqual(splitArgs('x, a,'), ['x', 'a', '']);
 });
 test('the !#if preprocessor answers like uBO Lite on Chromium MV3', () => {
   const env = { env_mv3: true, ext_ublock: true, env_chromium: true };

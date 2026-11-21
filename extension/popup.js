@@ -91,6 +91,7 @@ $('report').onclick = async () => {
     fb.length ? `Dynamic fallback: ${fb.map(([id, f]) => `${id} ${f.loaded}/${f.of}`).join(', ')}` : '',
     'What is broken: ',
   ].filter(Boolean).join('\n');
+  window.shieldReport = text;
   try { await navigator.clipboard.writeText(text); $('reportNote').textContent = 'Copied. Paste it into your report (for example a uBlock Origin or EasyList issue) - Shield sent nothing.'; }
   catch { $('reportNote').textContent = 'Couldn\'t copy to the clipboard.'; }
 };
