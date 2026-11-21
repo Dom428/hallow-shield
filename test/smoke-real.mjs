@@ -1,5 +1,9 @@
-// Hallow Shield smoke test with the REAL rules (after `node tools/build.mjs`): Chromium loads every ruleset, a well-known
-// ad server (doubleclick.net) and a well-known tracker (google-analytics.com) are blocked, a normal site is not.
+// Hallow Shield smoke test with the REAL rules (after `node tools/build.mjs` and `node tools/check-regex.mjs`):
+//   - the sizes are inside the browser's limits (30,000 rules enabled at install, 1,000 regex rules, 50 rulesets)
+//   - Chromium loads every ruleset, and sample rules from each really match (so none was refused)
+//   - every regex rule is accepted by the browser
+//   - a well-known ad server (doubleclick.net) and tracker (google-analytics.com) are blocked, a normal site is not
+//   - the real uBO YouTube filters on a fake YouTube page (served locally as www.youtube.com): ad fields gone, video plays
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,16 +13,42 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 const { chromium } = await import('playwright').catch(() => createRequire(import.meta.url)('playwright'));
 
-const EXT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'extension');
+const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'extension');
+const EXT = fs.mkdtempSync(path.join(os.tmpdir(), 'shield-real-ext-'));
+fs.cpSync(SRC, EXT, { recursive: true });
+const mf = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8'));
+mf.permissions.push('declarativeNetRequestFeedback');   // testMatchOutcome (the shipped extension doesn't have it)
+fs.writeFileSync(path.join(EXT, 'manifest.json'), JSON.stringify(mf));
 const meta = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'meta.json'), 'utf8'));
-assert.ok(meta.rules.ads > 5000 && meta.rules.privacy > 3000, 'real lists converted: ' + JSON.stringify(meta.rules));
+const L = meta.lists;
+assert.ok(L.easylist.network > 20000 && L.easyprivacy.network > 20000 && L['ublock-filters'].network > 3000 && L.plowe.network > 1000, 'real lists converted: ' + JSON.stringify(Object.fromEntries(Object.entries(L).map(([k, v]) => [k, v.network]))));
+assert.ok(meta.enabledAtInstall <= 30000, `enabled at install ${meta.enabledAtInstall} > 30,000 guaranteed`);
+assert.ok(meta.regex <= 1000, `${meta.regex} regex rules`);
+assert.ok(Object.keys(meta.rulesets).length <= 50);
+assert.ok(meta.scriptlets.used['json-prune'] || meta.scriptlets.used['set-constant'], 'scriptlets built');
+
 const seen = [];
+const PLAYER = { videoDetails: { videoId: 'abc', title: 'Test video' }, streamingData: { formats: [{ itag: 18 }] }, playabilityStatus: { status: 'OK' },
+  adPlacements: [{ adPlacementRenderer: { config: {} } }], playerAds: [{ playerLegacyDesktopWatchAdsRenderer: {} }], adSlots: [{ adSlotRenderer: {} }] };
+const YT = `<!doctype html><html><head><title>video</title></head><body><div id="player">loading</div>
+  <script>var ytInitialPlayerResponse = ${JSON.stringify(PLAYER)};</script>
+  <script>
+    window.result = {};
+    result.initialAds = !!(ytInitialPlayerResponse.adPlacements || ytInitialPlayerResponse.playerAds || ytInitialPlayerResponse.adSlots);
+    result.initialVideo = ytInitialPlayerResponse.videoDetails && ytInitialPlayerResponse.videoDetails.videoId;
+    fetch('/youtubei/v1/player?prettyPrint=false', { method: 'POST', body: '{"videoId":"abc"}' }).then(r => r.json()).then(j => {
+      result.fetchAds = !!(j.adPlacements || j.playerAds || j.adSlots); result.fetchVideo = j.videoDetails && j.videoDetails.videoId;
+      document.getElementById('player').textContent = 'playing ' + result.fetchVideo;
+    }).catch(e => { result.fetchError = String(e); });
+  </script></body></html>`;
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://' + req.headers.host); seen.push(u.hostname + u.pathname);
   if (u.pathname === '/page') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<!doctype html><body><p>news</p>
     <script src="http://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
     <script src="http://www.google-analytics.com/analytics.js"></script>
     <script src="http://cdn.example.org/app.js"></script></body>`); }
+  if (u.pathname === '/watch') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(YT); }
+  if (u.pathname.startsWith('/youtubei/v1/player')) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(PLAYER)); }
   res.writeHead(200, { 'Content-Type': 'text/javascript' }); res.end('');
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -27,11 +57,63 @@ const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.t
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, `--proxy-server=http://127.0.0.1:${server.address().port}`, '--proxy-bypass-list=<-loopback>'],
 });
 const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker');
-const sets = await sw.evaluate(() => chrome.declarativeNetRequest.getEnabledRulesets());
-assert.deepEqual(sets.sort(), ['ads', 'privacy']);
+const until = async (f, ms) => { const t0 = Date.now(); for (;;) { if (await f()) return true; if (Date.now() - t0 > ms) return false; await new Promise(r => setTimeout(r, 200)); } };
+const LISTS = Object.keys(L);
+// the background switches on the lists the manifest leaves off (shared pool), or loads them as dynamic rules
+await until(async () => {
+  const on = await sw.evaluate(() => chrome.declarativeNetRequest.getEnabledRulesets());
+  const fb = (await sw.evaluate(async () => (await chrome.storage.local.get('fallback')).fallback)) || {};
+  return LISTS.every(id => on.includes(id) || fb[id]);
+}, 20000);
+const state = await sw.evaluate(async () => ({
+  on: await chrome.declarativeNetRequest.getEnabledRulesets(), room: await chrome.declarativeNetRequest.getAvailableStaticRuleCount(),
+  fallback: (await chrome.storage.local.get('fallback')).fallback || {}, dynamic: (await chrome.declarativeNetRequest.getDynamicRules()).length,
+  scripts: (await chrome.scripting.getRegisteredContentScripts()).length,
+}));
+const enabledRules = state.on.reduce((n, id) => n + (meta.rulesets[id]?.rules || 0), 0);
+console.log('enabled rulesets:', state.on.join(', '), `= ${enabledRules} rules; shared-pool room left ${state.room}; dynamic fallback ${JSON.stringify(state.fallback)} (${state.dynamic} dynamic rules); ${state.scripts} content scripts`);
+for (const id of LISTS) assert.ok(state.on.includes(id) || state.fallback[id]?.loaded > 0, id + ' neither enabled nor loaded as dynamic rules');
+
+// every regex rule accepted by the browser
+const regexes = [];
+for (const id of Object.keys(meta.rulesets)) for (const r of JSON.parse(fs.readFileSync(path.join(EXT, 'rules', id + '.json'), 'utf8'))) if (r.condition.regexFilter) regexes.push(r.condition.regexFilter);
+const refused = await sw.evaluate(async list => { let n = 0; for (const regex of list) if (!(await chrome.declarativeNetRequest.isRegexSupported({ regex })).isSupported) n++; return n; }, regexes);
+assert.equal(refused, 0, `${refused} of ${regexes.length} regex rules refused by the browser`);
+assert.ok(regexes.length <= 1000);
+
+// sample rules from every enabled ruleset really match (a refused or ignored rule would not)
+const samples = [];
+for (const id of state.on) {
+  const rules = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', id + '.json'), 'utf8'))
+    .filter(r => r.action.type === 'block' && r.condition.requestDomains && !r.condition.initiatorDomains && !r.condition.excludedRequestDomains && !r.condition.excludedInitiatorDomains && r.condition.resourceTypes.includes('script') && r.condition.domainType !== 'firstParty');
+  for (const r of rules.slice(0, 15)) samples.push({ id, rule: r.id, url: `https://${r.condition.requestDomains[r.condition.requestDomains.length - 1]}/x.js` });
+}
+const outcomes = await sw.evaluate(async list => {
+  const out = [];
+  for (const s of list) { const o = await chrome.declarativeNetRequest.testMatchOutcome({ url: s.url, type: 'script', initiator: 'https://news.example.org' }); out.push(o.matchedRules.map(m => m.rulesetId + '#' + m.ruleId)); }
+  return out;
+}, samples);
+const missed = samples.filter((s, i) => !outcomes[i].length);
+console.log(`sample rules: ${samples.length} checked with testMatchOutcome, ${missed.length} matched nothing`);
+assert.equal(missed.length, 0, 'rules that did not load: ' + JSON.stringify(missed.slice(0, 5)));
+
 const p = await ctx.newPage(); await p.goto('http://news.example.org/page'); await p.waitForTimeout(800);
 assert.ok(seen.includes('cdn.example.org/app.js'), 'a normal script loads');
 assert.ok(!seen.some(s => s.includes('doubleclick.net')), 'doubleclick.net blocked');
 assert.ok(!seen.some(s => s.includes('google-analytics.com')), 'google-analytics.com blocked');
+await p.close();
+
+// the real YouTube filters on a fake page
+const y = await ctx.newPage();
+const errors = []; y.on('pageerror', e => errors.push(String(e)));
+await y.goto('http://www.youtube.com/watch?v=abc'); await y.waitForTimeout(1500);
+const r = await y.evaluate(() => window.result);
+console.log('fake YouTube with the real filters:', JSON.stringify(r), errors.length ? 'page errors: ' + errors.join(' | ') : '');
+assert.equal(r.initialAds, false, 'ytInitialPlayerResponse ad fields removed'); assert.equal(r.initialVideo, 'abc');
+assert.equal(r.fetchAds, false, '/youtubei/v1/player ad fields removed'); assert.equal(r.fetchVideo, 'abc');
+assert.equal(await y.textContent('#player'), 'playing abc');
+await y.close();
 await ctx.close(); server.close();
-console.log('real rules OK:', JSON.stringify(meta.rules), 'lists', JSON.stringify(Object.fromEntries(Object.entries(meta.lists).map(([k, v]) => [k, v.version]))));
+const counts = Object.fromEntries(Object.entries(meta.rulesets).map(([k, v]) => [k, v.rules]));
+console.log('real rules OK:', JSON.stringify(counts), 'total', meta.total, 'regex', meta.regex, 'lists', JSON.stringify(Object.fromEntries(Object.entries(L).map(([k, v]) => [k, v.version]))));
+console.log('scriptlets:', meta.scriptlets.filtersUsed, 'filters used,', meta.scriptlets.filtersSkipped, 'skipped,', meta.scriptlets.bundles, 'bundles');

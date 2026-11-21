@@ -1,5 +1,7 @@
-# Hallow Shield: tests the converter, runs the real extension in Chromium against test pages, then builds the rules from
-# the newest EasyList and EasyPrivacy, checks Chromium loads them and blocks real ad servers, and packs the zips.
+# Hallow Shield: tests the converter and scriptlets, runs the real extension in Chromium against test pages (sample
+# lists), then builds the rules from the newest lists (uBlock filters, EasyList, EasyPrivacy, Peter Lowe), has Chromium
+# check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, packs the zips,
+# lints the Firefox package, and (not gating) records the d3ward ad-block test score.
 name: Build
 
 on:
@@ -22,18 +24,29 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npx playwright install --with-deps chromium
-      - name: Converter tests
+      - name: Converter and scriptlet tests
         run: npm test
-      - name: The extension in Chromium (sample rules)
+      - name: The extension in Chromium (sample lists)
         run: npm run rules:sample && npm run e2e
-      - name: Rules from the newest EasyList and EasyPrivacy
+      - name: Rules from the newest lists
         run: npm run rules
+      - name: Chromium checks every regex rule
+        run: npm run regex
       - name: Explain doubleclick gpt.js
         run: node tools/explain.mjs http://securepubads.g.doubleclick.net/tag/js/gpt.js http://news.example.org/page script
-      - name: Chromium loads the real rules and blocks real ad servers
-        run: node test/smoke-real.mjs
+      - name: Chromium loads the real rules, blocks real ad servers, real YouTube filters on a fake page
+        run: npm run smoke
       - name: Pack for Chrome / Edge / Brave / Opera and Firefox
         run: npm run package
+      - name: Lint the Firefox package (addons-linter)
+        continue-on-error: true
+        run: |
+          mkdir -p dist/ff && cd dist/ff && unzip -q ../hallow-shield-firefox-*.zip
+          npx --yes web-ext@8 lint --source-dir . --self-hosted --output text
+      - name: d3ward ad-block test page (real network, headed under xvfb; recorded, not gating)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: xvfb-run -a node test/d3ward.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: hallow-shield

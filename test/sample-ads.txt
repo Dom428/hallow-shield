@@ -18,3 +18,4 @@ news.test#@#.ad-banner
 example.org#?#.box:-abp-has(.ad)
 example.org##+js(nowebrtc)
 weird.example##.a:has-text(Ad)
+||cancelled.example^

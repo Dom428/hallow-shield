@@ -6,9 +6,11 @@
   "type": "module",
   "scripts": {
     "rules": "node tools/build.mjs",
-    "rules:sample": "node tools/build.mjs --ads test/sample-ads.txt --privacy test/sample-privacy.txt",
+    "rules:sample": "node tools/build.mjs --sample",
     "test": "node --test test/convert.test.mjs",
     "e2e": "node test/e2e.mjs",
+    "regex": "node tools/check-regex.mjs",
+    "smoke": "node test/smoke-real.mjs",
     "package": "node tools/package.mjs"
   },
   "devDependencies": { "playwright": "1.63.0" }

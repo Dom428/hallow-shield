@@ -3,7 +3,7 @@
   "name": "Hallow Shield",
   "short_name": "Shield",
   "version": "1.0",
-  "description": "Blocks ads and trackers - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
+  "description": "Blocks ads, trackers and YouTube ads - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
   "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
   "action": { "default_popup": "popup.html", "default_title": "Hallow Shield", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
   "background": { "service_worker": "background.js", "type": "module" },
@@ -11,9 +11,17 @@
   "host_permissions": ["<all_urls>"],
   "declarative_net_request": {
     "rule_resources": [
-      { "id": "ads", "enabled": true, "path": "rules/ads.json" },
-      { "id": "privacy", "enabled": true, "path": "rules/privacy.json" }
+      { "id": "ublock-filters", "enabled": true, "path": "rules/ublock-filters.json" },
+      { "id": "easylist", "enabled": true, "path": "rules/easylist.json" },
+      { "id": "easyprivacy", "enabled": true, "path": "rules/easyprivacy.json" },
+      { "id": "ublock-badware", "enabled": false, "path": "rules/ublock-badware.json" },
+      { "id": "ublock-privacy", "enabled": false, "path": "rules/ublock-privacy.json" },
+      { "id": "ublock-unbreak", "enabled": false, "path": "rules/ublock-unbreak.json" },
+      { "id": "ublock-quick-fixes", "enabled": false, "path": "rules/ublock-quick-fixes.json" },
+      { "id": "plowe", "enabled": false, "path": "rules/plowe.json" },
+      { "id": "popups", "enabled": false, "path": "rules/popups.json" }
     ]
   },
+  "web_accessible_resources": [{ "resources": ["web/*"], "matches": ["<all_urls>"] }],
   "minimum_chrome_version": "120"
 }

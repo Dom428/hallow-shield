@@ -1,0 +1,55 @@
+! Title: Hallow Shield test list in uBlock Origin style (written for the tests - not uBlock filters)
+! Version: test-3
+! a regex filter
+/^https?:\/\/regex\.example\/banner\d+\.png/$image
+! redirects to Shield's own harmless stand-ins
+||redirect.example/gpt.js$script,redirect=googletagservices_gpt.js
+||redirect.example/pixel.gif$image,redirect=1x1.gif:5
+! tracking parameters
+$removeparam=utm_source
+$removeparam=fbclid
+! a Content-Security-Policy for one site
+||csp.test^$csp=script-src 'self'
+! $important beats an exception; $badfilter cancels a filter of another list
+||important.example^$important
+@@||important.example^
+||cancelled.example^$badfilter
+! every third-party script on strict.test, except two hosts
+*$script,3p,denyallow=fine.example|cdn.example,domain=strict.test
+! a pop-under host (strict blocking, level Complete)
+||popunder.example^$popup
+! a badware site: the page itself is blocked
+||badware.example^$document
+!#if env_mv3
+||mv3only.example^
+!#else
+||notmv3.example^
+!#endif
+! procedural cosmetic filters
+news.test##.post:has-text(/sponsored/i)
+news.test##.label:has-text(Promoted):upward(2)
+news.test##.side:matches-css(position: absolute)
+news.test##.junk:remove()
+news.test##.hl:style(color: rgb(255, 0, 0))
+news.test#?#div.card:has(> .tag:has-text(Ad))
+news.test##:xpath(//div[@data-kind="advert"])
+news.test##.later:has-text(Late ad)
+! the lists turn generic hiding off on a site; a specific-generic filter still applies there
+@@||plain.test^$generichide
+*##.everywhere-box
+! scriptlets
+news.test##+js(set, adsConfig.enabled, false)
+news.test##+js(aopr, adBlockDetector)
+news.test##+js(nostif, adTimer)
+news.test##+js(ra, onclick, .clicky)
+news.test##+js(no-fetch-if, /ads/config)
+news.test##+js(some-unknown-scriptlet, x)
+sub.news.test#@#+js(set, adsConfig.enabled, false)
+! YouTube-style filters (the fake video site is youtube.test)
+youtube.test##+js(set, ytInitialPlayerResponse.adPlacements, undefined)
+youtube.test##+js(set, ytInitialPlayerResponse.playerAds, undefined)
+youtube.test##+js(set, ytInitialPlayerResponse.adSlots, undefined)
+youtube.test##+js(json-prune, playerResponse.adPlacements playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots)
+youtube.test##+js(json-prune-fetch-response, playerAds adPlacements adSlots, , propsToMatch, /youtubei/v1/player)
+youtube.test##+js(json-prune-xhr-response, playerAds adPlacements adSlots, , propsToMatch, /youtubei/v1/next)
+youtube.test##+js(trusted-replace-fetch-response, /"adBreakHeartbeatParams":"[^"]*"/, "adBreakHeartbeatParams":"", /youtubei/v1/player)

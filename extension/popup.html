@@ -10,13 +10,28 @@
     <button id="pause" class="big">Pause on this site</button>
     <p id="note" class="muted small"></p>
   </section>
-  <section class="switches">
-    <label><input type="checkbox" id="ads"> Block ads</label>
-    <label><input type="checkbox" id="privacy"> Block trackers</label>
-    <label><input type="checkbox" id="hide"> Hide empty ad boxes</label>
+  <section class="level">
+    <div class="label">Blocking</div>
+    <div class="seg" role="radiogroup" aria-label="Blocking level">
+      <button data-level="basic" role="radio">Basic</button>
+      <button data-level="optimal" role="radio">Optimal</button>
+      <button data-level="complete" role="radio">Complete</button>
+    </div>
+    <p id="levelText" class="muted small"></p>
+    <button id="grant" class="big secondary" hidden>Allow Shield on all sites</button>
+  </section>
+  <details id="advanced">
+    <summary>Advanced: filter lists</summary>
+    <div id="lists"></div>
+    <p id="room" class="muted small"></p>
+  </details>
+  <section class="report">
+    <button id="report" class="big secondary">Report a broken site</button>
+    <p id="reportNote" class="muted small"></p>
   </section>
   <footer class="muted small">The browser blocks them itself - Hallow Shield never sees or sends what you browse.<br>
-    Filter lists: <a href="https://easylist.to/" target="_blank" rel="noopener">EasyList and EasyPrivacy</a> (CC BY-SA 3.0).</footer>
+    Lists: uBlock filters, EasyList, EasyPrivacy, Peter Lowe's list (see LISTS-LICENSE.txt). Approach after
+    <a href="https://github.com/uBlockOrigin/uBOL-home" target="_blank" rel="noopener">uBlock Origin Lite</a>.</footer>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

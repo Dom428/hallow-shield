@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXT = path.join(ROOT, 'extension'), DIST = path.join(ROOT, 'dist');
 const mf = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8'));
-for (const f of ['ads.json', 'privacy.json', 'generic.css', 'sites.json', 'meta.json']) if (!fs.existsSync(path.join(EXT, 'rules', f))) throw new Error('run tools/build.mjs first: rules/' + f + ' is missing');
+const needed = [...mf.declarative_net_request.rule_resources.map(r => r.path.replace('rules/', '')), 'generic.css', 'specific-generic.css', 'cosmetic-meta.json', 'scriptlets.json', 'meta.json'];
+for (const f of needed) if (!fs.existsSync(path.join(EXT, 'rules', f))) throw new Error('run tools/build.mjs first: rules/' + f + ' is missing');
 fs.rmSync(DIST, { recursive: true, force: true }); fs.mkdirSync(DIST);
 
 function pack(name, manifest) {
