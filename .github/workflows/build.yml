@@ -1,5 +1,6 @@
 # Hallow Shield: tests the converter and scriptlets, runs the real extension in Chromium against test pages (sample
-# lists), then builds the rules from the newest lists (uBlock filters, EasyList, EasyPrivacy, Peter Lowe), has Chromium
+# lists), then builds the rules from the newest lists (uBlock filters, EasyList, EasyPrivacy, Peter Lowe,
+# the cookie-notice and annoyance lists), has Chromium
 # check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, packs the zips,
 # and lints the Firefox package.
 name: Build

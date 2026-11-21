@@ -1,5 +1,9 @@
 // Hallow Shield: small helpers shared by the background, the popup, the build and the tests.
+// dynamic rule ids: 1.. the dynamic fallback (lists without room), PAUSE_BASE.. paused sites, USER_BASE.. My filters
 export const PAUSE_BASE = 1000000;
+export const USER_BASE = 2000000;
+export const USER_MAX = 2000;        // network rules from My filters (dynamic rules; the fallback leaves room for them)
+export const USER_REGEX_MAX = 50;
 export const PAUSE_PRIORITY = 1000;   // above every list rule, $important included: a paused site gets everything
 export const LEVELS = ['basic', 'optimal', 'complete'];
 export const DEFAULT_LEVEL = 'optimal';
@@ -52,9 +56,12 @@ export function pauseRule(domain, id) {
 export const validDomain = d => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d);
 // match patterns for a site and its subdomains
 export const patternsFor = domains => domains.filter(validDomain).map(d => `*://*.${d}/*`);
-// which rulesets should be on: every list unless switched off in Advanced, plus strict pop-up blocking at "Complete"
-export function wantedRulesets(s, listIds) {
-  const on = listIds.filter(id => s.lists?.[id] !== false);
+// the popup's group switches: cookie banners hidden unless switched off, other annoyances only when switched on
+export const groupOn = (s, g) => g === 'main' || !g ? true : g === 'cookies' ? s.cookies !== false : g === 'annoyances' ? s.annoyances === true : false;
+// which rulesets should be on: every list unless switched off in Advanced (a list in a group only while its group is
+// on), plus strict pop-up blocking at "Complete"
+export function wantedRulesets(s, listIds, groupOf = {}) {
+  const on = listIds.filter(id => s.lists?.[id] !== false && groupOn(s, groupOf[id]));
   if (s.level === 'complete') on.push('popups');
   return on;
 }

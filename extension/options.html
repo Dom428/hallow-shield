@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="options.css"><title>Hallow Shield - My filters</title></head>
+<body>
+  <header><img src="icons/32.png" alt=""><span class="brand">HALLOW</span> SHIELD <span class="muted">- My filters</span></header>
+  <main>
+    <section>
+      <h1>My filters</h1>
+      <p class="muted">Your own filters, one per line, in Adblock Plus / uBlock Origin syntax. They stay in the browser on
+        this PC and are never sent anywhere.</p>
+      <ul class="muted small help">
+        <li><code>example.com##.newsletter-box</code> hides something on one site; <code>##.thing</code> on every site
+          (procedural filters like <code>:has-text()</code> work with a site in front).</li>
+        <li><code>||ads.example.com^</code> blocks requests; <code>@@||cdn.example.com/lib.js</code> lets one through;
+          options such as <code>$script</code>, <code>$third-party</code>, <code>$domain=</code>, <code>$important</code>,
+          <code>$removeparam=</code> work as in the lists. They become the browser's own rules when you save.</li>
+        <li>Scriptlet filters (<code>##+js(...)</code>) aren't accepted here: Shield only runs the page fixes that ship with it.</li>
+        <li>What you hide with <b>Hide something on this page</b> in the popup is saved here as <code>site##selector</code>.</li>
+      </ul>
+      <textarea id="filters" spellcheck="false" autocomplete="off" aria-label="My filters"></textarea>
+      <div class="bar">
+        <button id="save" class="primary">Save</button>
+        <button id="revert">Undo changes</button>
+        <span class="spacer"></span>
+        <button id="export">Export</button>
+        <button id="import">Import</button>
+        <input type="file" id="file" accept=".txt,text/plain" hidden>
+      </div>
+      <p id="status" class="small" role="status"></p>
+      <div id="summary" class="muted small"></div>
+      <ol id="errors" class="errors"></ol>
+    </section>
+    <section>
+      <h2>Hidden on sites</h2>
+      <p class="muted small">The hiding filters for one site, from the zapper or typed above. Delete one to see that part of the site again.</p>
+      <ul id="zapped" class="zapped"></ul>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

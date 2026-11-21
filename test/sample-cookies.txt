@@ -1,0 +1,7 @@
+! Title: Hallow Shield test cookie-notice list (written for the tests - not EasyList Cookie)
+! Version: test-1
+##.cookie-banner
+cookie.test###consent-box
+cookie.test##.gdpr-wall:has-text(We value your privacy)
+||consent-cdn.example^$script,third-party
+cookie.test##+js(set-cookie, cookieConsent, 1)

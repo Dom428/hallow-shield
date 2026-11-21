@@ -1,7 +1,9 @@
 // Hallow Shield end-to-end test: the real extension in Chromium, with the browser's proxy pointed at a local test server
 // (so "ads.example", "news.test" and "youtube.test" are pages and files served here). Checks what the browser really
 // blocks, redirects, strips, hides and lets through; procedural filters; scriptlets (a fake YouTube page included);
-// pausing a site; the blocking levels; switching lists; the dynamic-rule fallback; and the popup. Build the sample rules first:
+// pausing a site; the blocking levels; switching lists; the dynamic-rule fallback; the cookie-banner and annoyance switches;
+// the element zapper (hide + persist, zap once, cancel); My filters (network + hiding, errors per line, export / import);
+// and the popup. Build the sample rules first:
 //   node tools/build.mjs --sample && node test/e2e.mjs
 import http from 'node:http';
 import fs from 'node:fs';
@@ -20,7 +22,10 @@ const EXT = fs.mkdtempSync(path.join(os.tmpdir(), 'shield-ext-'));
 fs.cpSync(SRC, EXT, { recursive: true });
 const mf = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')); mf.permissions.push('declarativeNetRequestFeedback');
 fs.writeFileSync(path.join(EXT, 'manifest.json'), JSON.stringify(mf));
-const scriptletBundles = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'scriptlets.json'), 'utf8')).length;
+const bundles = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'scriptlets.json'), 'utf8'));
+const META = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'meta.json'), 'utf8'));
+// content scripts for the cosmetic groups that are on: generic + specific-generic CSS per group, content.js, scriptlets
+const expectedScripts = groups => 1 + 2 * groups.length + bundles.filter(b => groups.includes(b.group || 'main')).length;
 
 const seen = [];
 const html = (title, body) => `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
@@ -87,6 +92,25 @@ const YT = `
     x.onload = function () { var j = JSON.parse(x.responseText); result.xhrAds = !!(j.playerAds || j.adPlacements); result.xhrOk = j.contents === 'ok'; };
     x.send('{}');
   </script>`;
+// cookie banners and annoyances (sample lists test/sample-cookies.txt, test/sample-annoyances.txt)
+const COOKIE = `
+  <p id="content">Real content</p>
+  <div class="cookie-banner" id="cb">We use cookies</div>
+  <div id="consent-box">Accept all?</div>
+  <div class="gdpr-wall" id="gw">We value your privacy</div>
+  <div class="newsletter-popup" id="nl">Subscribe!</div>
+  <div class="chat-bubble" id="chat">Chat with us</div>
+  <div class="social-share" id="ss">Share</div>
+  <script src="http://consent-cdn.example/consent.js"></script>
+  <script src="http://chat-widget.example/w.js"></script>`;
+// the zapper's page and My filters' page
+const ZAP = `
+  <div class="promo-wrap" id="wrap" style="padding:30px;margin:20px;width:400px"><p class="promo-text" id="ptext" style="margin:0;padding:10px">Buy now</p></div>
+  <div class="keep" id="keep" style="padding:30px;margin:20px;width:400px">Keep me</div>
+  <div class="other" id="other" style="padding:30px;margin:20px;width:400px">Other</div>`;
+const MF = `
+  <div class="my-hide" id="mh">mine</div><div class="my-generic" id="mg">generic</div><div id="stay">stay</div>
+  <script src="http://myblock.example/x.js"></script><script src="http://fine.example/lib.js"></script>`;
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://' + req.headers.host);   // as a proxy, the request line has the whole address
   const host = u.hostname; seen.push(host + u.pathname + u.search);
@@ -94,6 +118,9 @@ const server = http.createServer((req, res) => {
   if (u.pathname === '/youtubei/v1/player') return send('application/json', JSON.stringify({ ...PLAYER, adBreakHeartbeatParams: 'QUQ=' }));
   if (u.pathname === '/youtubei/v1/next') return send('application/json', JSON.stringify({ contents: 'ok', playerAds: [1], adPlacements: [1] }));
   if (u.pathname === '/watch') return send('text/html', html('video', YT));
+  if (u.pathname === '/cookie') return send('text/html', html('cookies', COOKIE));
+  if (u.pathname === '/zap') return send('text/html', html('zap', ZAP));
+  if (u.pathname === '/mf') return send('text/html', html('mf', MF));
   if (u.pathname.startsWith('/page')) return send('text/html', html(host, COMMON + (host.endsWith('news.test') ? NEWS : '')));
   if (u.pathname.endsWith('.json')) return send('application/json', '{"ads":true}');
   if (u.pathname.endsWith('.js')) return send('text/javascript', '');
@@ -117,8 +144,9 @@ const until = async (f, ms = 8000, what = 'condition') => { const t0 = Date.now(
 const scripts = () => sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
 const enabled = () => sw.evaluate(() => chrome.declarativeNetRequest.getEnabledRulesets());
 const set = v => sw.evaluate(v => chrome.storage.local.set(v), v);
-const ALL_LISTS = ['ublock-filters', 'easylist', 'easyprivacy', 'ublock-badware', 'ublock-privacy', 'ublock-unbreak', 'ublock-quick-fixes', 'plowe'];
-await until(async () => (await scripts()).length === 3 + scriptletBundles, 10000, 'content scripts registered');
+const ALL_LISTS = ['ublock-filters', 'easylist', 'easyprivacy', 'ublock-badware', 'ublock-privacy', 'ublock-unbreak', 'ublock-quick-fixes', 'plowe', 'ublock-cookies', 'easylist-cookies'];
+const EVERY_LIST = Object.keys(META.lists);
+await until(async () => (await scripts()).length === expectedScripts(['main', 'cookies']), 10000, 'content scripts registered');
 await until(async () => (await enabled()).length === ALL_LISTS.length, 10000, 'every list enabled');
 
 async function visit(host, p = '/page', wait = 500) {
@@ -132,8 +160,11 @@ const shown = (p, id) => p.evaluate(i => { const e = document.getElementById(i);
 const exists = (p, id) => p.evaluate(i => !!document.getElementById(i), id);
 const result = p => p.evaluate(() => window.result);
 
-await step('every list is on: the manifest\'s sets plus the ones the background switches on', async () => {
+await step('every list is on except the annoyance lists (off by default); cookie-banner lists are on', async () => {
   assert.deepEqual((await enabled()).sort(), [...ALL_LISTS].sort());
+  assert.equal(EVERY_LIST.length, 13);
+  const ids = (await scripts()).map(c => c.id);
+  assert.ok(ids.includes('shield-generic-cookies') && ids.includes('shield-sl-cookies-set-cookie') && !ids.includes('shield-generic-annoyances'), ids.join(' '));
 });
 
 await step('network: blocks, exceptions, regex, redirect to a stand-in, $important, $badfilter, !#if', async () => {
@@ -338,6 +369,155 @@ await step('no room in the shared pool: the list is loaded as dynamic rules and 
   await until(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).length === 0, 5000, 'dynamic rules removed');
 });
 
+await step('cookie banners: hidden (and their scripts blocked) by default, shown with the switch off; annoyances only with theirs on', async () => {
+  let p = await visit('www.cookie.test', '/cookie', 700);
+  await until(async () => !(await shown(p, 'gw')), 3000, 'procedural cookie filter');
+  assert.equal(await shown(p, 'cb'), false, 'generic cookie banner hidden'); assert.equal(await shown(p, 'consent-box'), false, 'site cookie box hidden');
+  assert.ok(!gotAny('consent-cdn.example'), 'consent script blocked');
+  assert.equal(await shown(p, 'nl'), true, 'newsletter nag shown (annoyances off by default)'); assert.equal(await shown(p, 'chat'), true); assert.equal(await shown(p, 'ss'), true);
+  assert.ok(gotAny('chat-widget.example'), 'chat widget loads with annoyances off');
+  assert.equal(await shown(p, 'content'), true);
+  await p.close();
+  await set({ cookies: false });
+  await until(async () => !(await enabled()).includes('easylist-cookies') && !(await scripts()).some(c => c.id === 'shield-generic-cookies'), 5000, 'cookie lists off');
+  p = await visit('www.cookie.test', '/cookie', 900);
+  assert.equal(await shown(p, 'cb'), true, 'banner shown with the switch off'); assert.equal(await shown(p, 'consent-box'), true); assert.equal(await shown(p, 'gw'), true);
+  assert.ok(gotAny('consent-cdn.example'), 'consent script loads with the switch off');
+  await p.close();
+  await set({ cookies: true, annoyances: true });
+  await until(async () => (await enabled()).includes('fanboy-annoyances') && (await enabled()).includes('easylist-cookies') && (await scripts()).length === expectedScripts(['main', 'cookies', 'annoyances']), 5000, 'annoyances on');
+  p = await visit('www.cookie.test', '/cookie', 900);
+  assert.equal(await shown(p, 'nl'), false, 'newsletter nag hidden'); assert.equal(await shown(p, 'chat'), false, 'chat bubble hidden'); assert.equal(await shown(p, 'ss'), false, 'site social widget hidden');
+  assert.equal(await shown(p, 'cb'), false, 'cookie banner hidden again');
+  assert.ok(!gotAny('chat-widget.example'), 'chat widget blocked');
+  await p.close();
+  await set({ annoyances: false });
+  await until(async () => !(await enabled()).includes('fanboy-annoyances') && (await scripts()).length === expectedScripts(['main', 'cookies']), 5000, 'annoyances off');
+});
+
+const popupFor = async hostGlob => {
+  const id = sw.url().split('/')[2];
+  const tabId = await sw.evaluate(async g => (await chrome.tabs.query({ url: g }))[0].id, hostGlob);
+  const pop = await ctx.newPage();
+  await pop.goto(`chrome-extension://${id}/popup.html?tab=${tabId}`);
+  await pop.waitForTimeout(500);
+  return pop;
+};
+const myFilters = () => sw.evaluate(async () => (await chrome.storage.local.get({ myFilters: '' })).myFilters);
+const center = (p, sel) => p.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }, sel);
+const pickerOpen = p => p.evaluate(() => !!document.querySelector('hallow-shield-picker'));
+
+await step('the zapper: hover, widen with the Up key, click - hidden and saved as site##selector, still hidden after a reload', async () => {
+  const p = await visit('www.zap.test', '/zap', 300);
+  const pop = await popupFor('*://www.zap.test/*');
+  await pop.click('#pick');
+  await until(() => pickerOpen(p), 3000, 'picker injected'); await p.bringToFront();
+  assert.equal(await p.evaluate(() => document.querySelector('hallow-shield-picker').shadowRoot), null, 'closed shadow root');
+  const [x, y] = await center(p, '#ptext');
+  await p.mouse.move(x - 5, y - 2); await p.mouse.move(x, y);
+  await p.keyboard.press('ArrowUp');            // from the text to the box around it
+  await p.mouse.click(x, y);
+  await until(async () => !(await shown(p, 'wrap')), 3000, 'the widened element is hidden');
+  assert.equal(await shown(p, 'keep'), true); assert.equal(await shown(p, 'other'), true);
+  assert.equal(await pickerOpen(p), false, 'picker closed after hiding');
+  await until(async () => /^zap\.test##.+$/m.test(await myFilters()), 3000, 'saved');
+  const line = (await myFilters()).split('\n').find(l => l.startsWith('zap.test##'));
+  console.log('     saved: ' + line);
+  assert.ok(await p.evaluate(s => document.querySelector(s) === document.getElementById('wrap'), line.slice('zap.test##'.length)), 'the saved selector names the box');
+  await p.reload(); await p.waitForTimeout(500);
+  await until(async () => !(await shown(p, 'wrap')), 3000, 'still hidden after a reload');
+  assert.equal(await shown(p, 'keep'), true);
+  await pop.close(); await p.close();
+});
+
+await step('the zapper: Zap once removes without saving; Esc cancels', async () => {
+  const before = await myFilters();
+  const p = await visit('www.zap.test', '/zap', 300);
+  let pop = await popupFor('*://www.zap.test/*');
+  await pop.click('#zap');
+  await until(() => pickerOpen(p), 3000, 'picker injected'); await p.bringToFront();
+  const [x, y] = await center(p, '#keep');
+  await p.mouse.move(x - 3, y); await p.mouse.move(x, y);
+  await p.mouse.click(x, y);
+  await until(async () => !(await exists(p, 'keep')), 3000, 'zapped');
+  assert.equal(await myFilters(), before, 'nothing saved');
+  await pop.close();
+  pop = await popupFor('*://www.zap.test/*');
+  await pop.click('#pick');
+  await until(() => pickerOpen(p), 3000, 'picker injected again'); await p.bringToFront();
+  const [ox, oy] = await center(p, '#other');
+  await p.mouse.move(ox, oy);
+  await p.keyboard.press('Escape');
+  await until(async () => !(await pickerOpen(p)), 3000, 'Esc closes the picker');
+  await p.mouse.click(ox, oy);
+  assert.equal(await shown(p, 'other'), true, 'nothing hidden after Esc');
+  assert.equal(await myFilters(), before);
+  await p.reload(); await p.waitForTimeout(400);
+  assert.equal(await exists(p, 'keep'), true, 'a zapped element is back after a reload');
+  await pop.close(); await p.close();
+});
+
+const optionsPage = async () => {
+  const id = sw.url().split('/')[2];
+  const op = await ctx.newPage();
+  await op.goto(`chrome-extension://${id}/options.html`);
+  await op.waitForSelector('#filters');
+  return op;
+};
+await step('My filters: network and hiding filters work after Save; refused lines are listed by line number; zapper rules can be deleted', async () => {
+  const op = await optionsPage();
+  const zapLine = (await myFilters()).split('\n').find(l => l.startsWith('zap.test##'));
+  assert.ok((await op.inputValue('#filters')).includes(zapLine), 'the zapper\'s rule is in My filters');
+  assert.ok((await op.textContent('#zapped')).includes(zapLine), '...and in the per-site list');
+  const text = (await op.inputValue('#filters')).replace(/\n*$/, '\n') + ['! mine', '||myblock.example^', 'myfilters.test##.my-hide', '##.my-generic', 'news.test##+js(set, x, 1)', '||bad.example^$replace=/a/b/'].join('\n') + '\n';
+  await op.fill('#filters', text);
+  await op.click('#save');
+  await until(async () => /Saved/.test(await op.textContent('#status')), 3000, 'saved');
+  const errs = await op.$$eval('#errors li', l => l.map(e => [Number(e.dataset.line), e.textContent]));
+  console.log('     errors: ' + JSON.stringify(errs));
+  const lines = text.split('\n');
+  assert.deepEqual(errs.map(e => e[0]), [lines.indexOf('news.test##+js(set, x, 1)') + 1, lines.indexOf('||bad.example^$replace=/a/b/') + 1]);
+  assert.match(errs[0][1], /Scriptlet/); assert.match(errs[1][1], /replace/);
+  await until(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).some(r => r.id >= 2000000), 5000, 'dynamic rule from My filters');
+  const p = await visit('www.myfilters.test', '/mf', 600);
+  assert.ok(!gotAny('myblock.example') && got('fine.example/lib.js'), 'my network filter blocks: ' + seen.join(' '));
+  await until(async () => !(await shown(p, 'mh')), 3000, 'my site hiding filter');
+  assert.equal(await shown(p, 'mg'), false, 'my generic hiding filter'); assert.equal(await shown(p, 'stay'), true);
+  await p.close();
+  // delete the zapper's rule from the list: the box is back
+  await op.click(`#zapped li:has(code:text-is("${zapLine}")) button`);
+  await until(async () => !(await myFilters()).includes(zapLine), 3000, 'deleted');
+  const z = await visit('www.zap.test', '/zap', 700);
+  assert.equal(await shown(z, 'wrap'), true, 'shown again after deleting the rule');
+  await z.close(); await op.close();
+});
+
+await step('My filters: export to a text file, clear, import it again - the same filters', async () => {
+  const op = await optionsPage();
+  const before = await myFilters();
+  assert.ok(before.includes('||myblock.example^'));
+  const [dl] = await Promise.all([op.waitForEvent('download'), op.click('#export')]);
+  assert.equal(dl.suggestedFilename(), 'hallow-shield-my-filters.txt');
+  const file = path.join(os.tmpdir(), 'shield-export-' + Date.now() + '.txt');
+  await dl.saveAs(file);
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'the export is exactly what was saved');
+  await op.fill('#filters', ''); await op.click('#save');
+  await until(async () => (await myFilters()) === '', 3000, 'cleared');
+  await until(async () => !(await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).some(r => r.id >= 2000000), 5000, 'rules removed');
+  await op.setInputFiles('#file', file);
+  await until(async () => (await myFilters()) === before, 3000, 'imported');
+  assert.match(await op.textContent('#status'), /Imported/);
+  assert.equal(await op.inputValue('#filters'), before);
+  await until(async () => (await sw.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).some(r => r.id >= 2000000), 5000, 'rules back');
+  const p = await visit('www.myfilters.test', '/mf', 500);
+  assert.ok(!gotAny('myblock.example'), 'blocking again after the import');
+  await p.close();
+  // clean up for the next steps
+  await op.fill('#filters', ''); await op.click('#save');
+  await until(async () => (await myFilters()) === '', 3000, 'cleared');
+  await op.close();
+});
+
 await step('the popup: site, count, level switch, lists, and the broken-site report (clipboard only)', async () => {
   const p = await visit('other.test', '/page?utm_source=a&secret=1', 1200);
   const id = sw.url().split('/')[2];
@@ -350,7 +530,14 @@ await step('the popup: site, count, level switch, lists, and the broken-site rep
   const n = Number(await pop.textContent('#count'));
   assert.ok(n >= 5, 'blocked count on the page: ' + n);
   assert.equal(await pop.getAttribute('[data-level="optimal"]', 'aria-checked'), 'true');
-  assert.equal(await pop.locator('#lists input[type=checkbox]').count(), ALL_LISTS.length);
+  assert.equal(await pop.locator('#lists input[data-list]').count(), EVERY_LIST.length);
+  assert.equal(await pop.isChecked('#cookies'), true, 'Hide cookie banners: on'); assert.equal(await pop.isChecked('#annoyances'), false, 'Hide annoyances: off');
+  assert.equal(await pop.isChecked('#lists input[data-group="cookies"]'), true, 'the same switch under Advanced');
+  await pop.click('label:has(#annoyances)');
+  await until(async () => (await sw.evaluate(async () => (await chrome.storage.local.get('annoyances')).annoyances)) === true, 3000, 'annoyances switch from the popup');
+  assert.equal(await pop.isChecked('#lists input[data-group="annoyances"]'), true, 'Advanced follows');
+  await pop.click('label:has(#annoyances)');
+  await until(async () => (await sw.evaluate(async () => (await chrome.storage.local.get('annoyances')).annoyances)) === false, 3000, 'and off again');
   await pop.setViewportSize({ width: 320, height: 640 });
   await pop.screenshot({ path: path.join(os.tmpdir(), 'shield-popup.png'), fullPage: true });
   seen.length = 0;

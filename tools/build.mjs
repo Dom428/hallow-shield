@@ -7,8 +7,10 @@
 //   <list>.json, popups.json        declarativeNetRequest rulesets (one per list; popups = strict pop-up blocking)
 //   generic.css, specific-generic.css   ad boxes hidden on every site (one CSS rule per selector)
 //   cosmetic/<n>.json               per-site hiding, :style() and procedural filters, sharded by site name
+//   cookies/..., annoyances/...     the same three kinds of files for the cookie-banner and annoyance lists (switched on
+//                                   and off as groups from the popup)
 //   cosmetic-meta.json              sites where the lists turn hiding off ($generichide, $elemhide, $specifichide)
-//   js/<scriptlet>.js, scriptlets.json   one MAIN-world bundle per scriptlet + the sites it's registered on
+//   js/<scriptlet>.js, scriptlets.json   one MAIN-world bundle per scriptlet (and group) + the sites it's registered on
 //   meta.json                       list versions, counts per ruleset, what was skipped
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { convertList, validRule, preprocess, badfilters, merge } from './convert.mjs';
 import { SCRIPTLETS, bundle, bundleMany } from './scriptlets.mjs';
-import { LISTS, POPUPS, RULESET_IDS, ENV } from './lists.mjs';
+import { LISTS, POPUPS, RULESET_IDS, ENV, GROUPS, COSMETIC_GROUPS, DEFAULT_ON, cosmeticGroup } from './lists.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'extension', 'rules');
@@ -29,7 +31,8 @@ const args = process.argv.slice(2);
 const sample = args.includes('--sample');
 const given = {};
 for (let i = 0; i < args.length; i++) if (args[i] === '--list') { const [k, v] = args[++i].split('='); given[k] = v; }
-if (sample) Object.assign(given, { easylist: 'test/sample-ads.txt', easyprivacy: 'test/sample-privacy.txt', 'ublock-filters': 'test/sample-ublock.txt', ...given });
+if (sample) Object.assign(given, { easylist: 'test/sample-ads.txt', easyprivacy: 'test/sample-privacy.txt', 'ublock-filters': 'test/sample-ublock.txt',
+  'easylist-cookies': 'test/sample-cookies.txt', 'fanboy-annoyances': 'test/sample-annoyances.txt', ...given });
 const offline = sample || Object.keys(given).length > 0;
 
 // curl with retries (Node's fetch has crashed mid-download on CI runners)
@@ -75,11 +78,14 @@ const texts = {};
 for (const list of LISTS) texts[list.id] = preprocess(await read(list), ENV);
 const bad = new Set(); for (const t of Object.values(texts)) for (const k of badfilters(t)) bad.add(k);
 
-const meta = { built: new Date().toISOString(), sample, lists: {}, rulesets: {}, cosmetic: {}, scriptlets: {}, badfilters: bad.size };
-const generic = new Set(), genericExcept = new Set(), specificGeneric = new Set();
+const meta = { built: new Date().toISOString(), sample, lists: {}, rulesets: {}, cosmetic: {}, groups: {}, scriptlets: {}, badfilters: bad.size };
+// cosmetic filters are kept per group ("main" = the ad and privacy lists; "cookies", "annoyances"), so the popup's
+// switches can turn a group's hiding on and off; exceptions and the $generichide-style flags apply to every group
+const G = Object.fromEntries(COSMETIC_GROUPS.map(g => [g, { generic: new Set(), specificGeneric: new Set(), sites: {} }]));
+const genericExcept = new Set();
 const flags = { generichide: new Set(), elemhide: new Set(), specifichide: new Set() };
-const sites = {};   // key (host or "name.*") -> { h: [selectors], x: [exception selectors], s: [[selector, style]], p: [[selector, program]] }
-const site = k => (sites[k] ||= { h: [], x: [], s: [], p: [] });
+// per group: key (host or "name.*") -> { h: [selectors], x: [exception selectors], s: [[selector, style]], p: [[selector, program]] }
+const siteIn = g => k => (G[g].sites[k] ||= { h: [], x: [], s: [], p: [] });
 const sl = [];      // all scriptlet filters
 let popups = [], regexLeft = REGEX_MAX;
 const skippedAll = {};
@@ -88,6 +94,7 @@ for (const list of LISTS) {
   const text = texts[list.id];
   const { rules, popups: pop, cosmetic, scriptlets, stats } = convertList(text, { maxRules: PER_LIST_MAX, trusted: !!list.trusted, bad, maxRegex: regexLeft });
   regexLeft -= stats.regex;
+  const g = cosmeticGroup(list), site = siteIn(g), generic = G[g].generic, specificGeneric = G[g].specificGeneric;
   const ruled = withIds(rules);
   const broken = ruled.filter(r => !validRule(r));
   if (broken.length) throw new Error(`${list.id}: ${broken.length} rules Chrome would refuse, e.g. ${JSON.stringify(broken[0])}`);
@@ -106,9 +113,9 @@ for (const list of LISTS) {
     for (const d of c.inc) c.exception ? site(d).x.push(c.selector) : site(d).p.push([c.selector, c.prog]);
     if (!c.exception) for (const d of c.exc) site(d).x.push(c.selector);
   }
-  for (const s of scriptlets) sl.push({ ...s, list: list.id });
+  for (const s of scriptlets) sl.push({ ...s, list: list.id, group: g });
   for (const [k, v] of Object.entries(stats.skipped)) skippedAll[k] = (skippedAll[k] || 0) + v;
-  meta.lists[list.id] = { name: list.name, source: offline ? (given[list.id] || 'none') : list.urls[0], version: version(text), lines: stats.lines,
+  meta.lists[list.id] = { name: list.name, group: list.cosmetic || null, defaultOn: DEFAULT_ON.includes(list.id), source: offline ? (given[list.id] || 'none') : list.urls[0], version: version(text), lines: stats.lines,
     network: stats.network, cosmetic: stats.cosmetic, scriptlets: stats.scriptlets, procedural: stats.procedural, badfiltered: stats.badfiltered, merged: stats.merged, dropped: stats.dropped };
   meta.rulesets[list.id] = { rules: ruled.length, allow: stats.allow, modify: stats.modify, regex: ruled.filter(r => r.condition.regexFilter).length };
   console.log(`${list.id}: ${ruled.length} rules (${stats.allow} exceptions, ${stats.modify} header/parameter, ${meta.rulesets[list.id].regex} regex), ` +
@@ -120,81 +127,93 @@ meta.rulesets[POPUPS.id] = { rules: popups.length, allow: 0, modify: 0, regex: 0
 console.log(`${POPUPS.id}: ${popups.length} rules`);
 
 // 2. cosmetic files
-const genericFinal = [...generic].filter(s => !genericExcept.has(s));
-fs.writeFileSync(path.join(OUT, 'generic.css'), genericFinal.map(s => `${s}{display:none!important}`).join('\n') + '\n');
-fs.writeFileSync(path.join(OUT, 'specific-generic.css'), [...specificGeneric].filter(s => !genericExcept.has(s)).map(s => `${s}{display:none!important}`).join('\n') + '\n');
-const shards = Array.from({ length: SHARDS }, () => ({}));
-for (const [k, v] of Object.entries(sites)) {
-  const o = {};
-  if (v.h.length) o.h = [...new Set(v.h)];
-  if (v.x.length) o.x = [...new Set(v.x)];
-  if (v.s.length) o.s = v.s;
-  if (v.p.length) o.p = v.p;
-  shards[hash(k)][k] = o;
+// main group: rules/generic.css, rules/cosmetic/...; the other groups: rules/<group>/generic.css, rules/<group>/cosmetic/...
+const css = set => [...set].filter(s => !genericExcept.has(s)).map(s => `${s}{display:none!important}`).join('\n') + '\n';
+for (const g of COSMETIC_GROUPS) {
+  const dir = g === 'main' ? OUT : path.join(OUT, g), { generic, specificGeneric, sites } = G[g];
+  fs.mkdirSync(path.join(dir, 'cosmetic'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'generic.css'), css(generic));
+  fs.writeFileSync(path.join(dir, 'specific-generic.css'), css(specificGeneric));
+  const shards = Array.from({ length: SHARDS }, () => ({}));
+  for (const [k, v] of Object.entries(sites)) {
+    const o = {};
+    if (v.h.length) o.h = [...new Set(v.h)];
+    if (v.x.length) o.x = [...new Set(v.x)];
+    if (v.s.length) o.s = v.s;
+    if (v.p.length) o.p = v.p;
+    shards[hash(k)][k] = o;
+  }
+  shards.forEach((s, i) => fs.writeFileSync(path.join(dir, 'cosmetic', i + '.json'), JSON.stringify(s)));
+  const c = { generic: [...generic].filter(s => !genericExcept.has(s)).length, specificGeneric: specificGeneric.size, sites: Object.keys(sites).length,
+    procedural: Object.values(sites).reduce((n, v) => n + v.p.length, 0), style: Object.values(sites).reduce((n, v) => n + v.s.length, 0) };
+  if (g === 'main') meta.cosmetic = { ...c, generichide: flags.generichide.size, elemhide: flags.elemhide.size, specifichide: flags.specifichide.size };
+  else meta.groups[g] = { name: GROUPS[g].name, on: GROUPS[g].on, lists: LISTS.filter(l => cosmeticGroup(l) === g).map(l => l.id), cosmetic: c };
 }
-shards.forEach((s, i) => fs.writeFileSync(path.join(OUT, 'cosmetic', i + '.json'), JSON.stringify(s)));
-fs.writeFileSync(path.join(OUT, 'cosmetic-meta.json'), JSON.stringify({ shards: SHARDS, ...Object.fromEntries(Object.entries(flags).map(([k, v]) => [k, [...v].sort()])) }));
-meta.cosmetic = { generic: genericFinal.length, specificGeneric: specificGeneric.size, sites: Object.keys(sites).length,
-  procedural: Object.values(sites).reduce((n, v) => n + v.p.length, 0), style: Object.values(sites).reduce((n, v) => n + v.s.length, 0),
-  generichide: flags.generichide.size, elemhide: flags.elemhide.size, specifichide: flags.specifichide.size };
+fs.writeFileSync(path.join(OUT, 'cosmetic-meta.json'), JSON.stringify({ shards: SHARDS, groups: Object.keys(GROUPS), ...Object.fromEntries(Object.entries(flags).map(([k, v]) => [k, [...v].sort()])) }));
 
 // 3. scriptlets: one bundle per scriptlet with the sites and arguments it runs with
 const validHost = d => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d);
-const per = {};   // canonical -> { args: [], key->index, hosts: {}, exc: {} }
-const used = {}, skipped = {};
-const globalOff = new Set();   // "#@#+js(name, args)" with no site: off everywhere
-for (const s of sl) {
-  if (s.unsupported) { skipped[s.name] = (skipped[s.name] || 0) + 1; continue; }
-  if (s.exception) continue;
-  if (!SCRIPTLETS[s.canonical]) { skipped[s.name] = (skipped[s.name] || 0) + 1; continue; }
-  const b = (per[s.canonical] ||= { args: [], index: new Map(), hosts: {}, exc: {} });
-  const key = JSON.stringify(s.args);
-  if (!b.index.has(key)) { b.index.set(key, b.args.length); b.args.push(s.args); }
-  const i = b.index.get(key);
-  let any = false;
-  for (const d of s.inc) { if (!validHost(d) && !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.\*$/.test(d)) continue; (b.hosts[d] ||= []).includes(i) || b.hosts[d].push(i); any = true; }
-  for (const d of s.exc) (b.exc[d] ||= []).push(i);
-  if (any) used[s.canonical] = (used[s.canonical] || 0) + 1;
-  else skipped['(site not expressible) ' + s.canonical] = (skipped['(site not expressible) ' + s.canonical] || 0) + 1;
-}
-for (const s of sl) {
-  if (!s.exception) continue;
-  const targets = s.name ? (per[s.canonical] ? [[s.canonical, per[s.canonical]]] : []) : Object.entries(per);
-  for (const [canon, b] of targets) {
-    const i = s.name ? b.index.get(JSON.stringify(s.args)) : -1;
-    if (i === undefined) continue;
-    if (!s.inc.length) { if (i >= 0) globalOff.add(canon + ' ' + i); continue; }
-    for (const d of s.inc) (b.exc[d] ||= []).push(i);
+const used = {}, skipped = {}, registered = [];
+// one group's scriptlet filters -> bundles; the exceptions of every list apply (as in uBO)
+function scriptletGroup(group) {
+  const per = {};   // canonical -> { args: [], key->index, hosts: {}, exc: {} }
+  const globalOff = new Set();   // "#@#+js(name, args)" with no site: off everywhere
+  const prefix = group === 'main' ? '' : group + '-';
+  for (const s of sl) {
+    if (s.group !== group) continue;
+    if (s.unsupported) { skipped[s.name] = (skipped[s.name] || 0) + 1; continue; }
+    if (s.exception) continue;
+    if (!SCRIPTLETS[s.canonical]) { skipped[s.name] = (skipped[s.name] || 0) + 1; continue; }
+    const b = (per[s.canonical] ||= { args: [], index: new Map(), hosts: {}, exc: {} });
+    const key = JSON.stringify(s.args);
+    if (!b.index.has(key)) { b.index.set(key, b.args.length); b.args.push(s.args); }
+    const i = b.index.get(key);
+    let any = false;
+    for (const d of s.inc) { if (!validHost(d) && !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.\*$/.test(d)) continue; (b.hosts[d] ||= []).includes(i) || b.hosts[d].push(i); any = true; }
+    for (const d of s.exc) (b.exc[d] ||= []).push(i);
+    if (any) used[s.canonical] = (used[s.canonical] || 0) + 1;
+    else skipped['(site not expressible) ' + s.canonical] = (skipped['(site not expressible) ' + s.canonical] || 0) + 1;
+  }
+  for (const s of sl) {
+    if (!s.exception) continue;
+    const targets = s.name ? (per[s.canonical] ? [[s.canonical, per[s.canonical]]] : []) : Object.entries(per);
+    for (const [canon, b] of targets) {
+      const i = s.name ? b.index.get(JSON.stringify(s.args)) : -1;
+      if (i === undefined) continue;
+      if (!s.inc.length) { if (i >= 0) globalOff.add(canon + ' ' + i); continue; }
+      for (const d of s.inc) (b.exc[d] ||= []).push(i);
+    }
+  }
+  // only the entries for some host keys, with the argument list re-numbered
+  const subset = (b, keys) => {
+    const map = new Map(), args = [], hosts = {}, exc = {};
+    const idx = i => { if (i < 0) return -1; if (!map.has(i)) { map.set(i, args.length); args.push(b.args[i]); } return map.get(i); };
+    for (const k of keys) hosts[k] = b.hosts[k].map(idx);
+    for (const [k, list] of Object.entries(b.exc)) { const l = list.filter(i => i < 0 || map.has(i)).map(i => i < 0 ? -1 : map.get(i)); if (l.length) exc[k] = l; }
+    return { args, hosts, exc };
+  };
+  const entityParts = {};
+  for (const [canon, b] of Object.entries(per)) {
+    for (const g of globalOff) { const [c, i] = g.split(' '); if (c === canon) for (const k of Object.keys(b.hosts)) b.hosts[k] = b.hosts[k].filter(x => x !== Number(i)); }
+    const live = Object.keys(b.hosts).filter(h => b.hosts[h].length);
+    const hosts = live.filter(validHost).sort(), entities = live.filter(h => h.endsWith('.*'));
+    if (entities.length) entityParts[canon] = subset(b, entities);
+    if (!hosts.length) continue;
+    const set = new Set(hosts);
+    const top = hosts.filter(h => { const p = h.split('.'); for (let i = 1; i < p.length - 1; i++) if (set.has(p.slice(i).join('.'))) return false; return true; });
+    const file = `rules/js/${prefix}${canon}.js`;
+    fs.writeFileSync(path.join(ROOT, 'extension', file), bundle(canon, subset(b, hosts)));
+    registered.push({ id: prefix + canon, group, file, matches: top.map(h => `*://*.${h}/*`) });
+  }
+  // filters for "name.*" sites can't be told to the browser as match patterns: one bundle for every page, which checks the
+  // site itself and stops at once on all the others
+  if (Object.keys(entityParts).length) {
+    const file = `rules/js/${prefix}_entities.js`;
+    fs.writeFileSync(path.join(ROOT, 'extension', file), bundleMany(entityParts, 'sites named as name.*'));
+    registered.push({ id: prefix + '_entities', group, file, matches: ['*://*/*'] });
   }
 }
-// only the entries for some host keys, with the argument list re-numbered
-const subset = (b, keys) => {
-  const map = new Map(), args = [], hosts = {}, exc = {};
-  const idx = i => { if (i < 0) return -1; if (!map.has(i)) { map.set(i, args.length); args.push(b.args[i]); } return map.get(i); };
-  for (const k of keys) hosts[k] = b.hosts[k].map(idx);
-  for (const [k, list] of Object.entries(b.exc)) { const l = list.filter(i => i < 0 || map.has(i)).map(i => i < 0 ? -1 : map.get(i)); if (l.length) exc[k] = l; }
-  return { args, hosts, exc };
-};
-const registered = [], entityParts = {};
-for (const [canon, b] of Object.entries(per)) {
-  for (const g of globalOff) { const [c, i] = g.split(' '); if (c === canon) for (const k of Object.keys(b.hosts)) b.hosts[k] = b.hosts[k].filter(x => x !== Number(i)); }
-  const live = Object.keys(b.hosts).filter(h => b.hosts[h].length);
-  const hosts = live.filter(validHost).sort(), entities = live.filter(h => h.endsWith('.*'));
-  if (entities.length) entityParts[canon] = subset(b, entities);
-  if (!hosts.length) continue;
-  const set = new Set(hosts);
-  const top = hosts.filter(h => { const p = h.split('.'); for (let i = 1; i < p.length - 1; i++) if (set.has(p.slice(i).join('.'))) return false; return true; });
-  const file = `rules/js/${canon}.js`;
-  fs.writeFileSync(path.join(ROOT, 'extension', file), bundle(canon, subset(b, hosts)));
-  registered.push({ id: canon, file, matches: top.map(h => `*://*.${h}/*`) });
-}
-// filters for "name.*" sites can't be told to the browser as match patterns: one bundle for every page, which checks the
-// site itself and stops at once on all the others
-if (Object.keys(entityParts).length) {
-  const file = 'rules/js/_entities.js';
-  fs.writeFileSync(path.join(ROOT, 'extension', file), bundleMany(entityParts, 'sites named as name.*'));
-  registered.push({ id: '_entities', file, matches: ['*://*/*'] });
-}
+for (const g of COSMETIC_GROUPS) scriptletGroup(g);
 fs.writeFileSync(path.join(OUT, 'scriptlets.json'), JSON.stringify(registered));
 meta.scriptlets = { implemented: Object.keys(SCRIPTLETS).length, used, skipped, bundles: registered.length,
   filtersUsed: Object.values(used).reduce((a, b) => a + b, 0), filtersSkipped: Object.values(skipped).reduce((a, b) => a + b, 0) };
@@ -207,13 +226,16 @@ const declared = mf.declarative_net_request.rule_resources.map(r => r.id);
 if (JSON.stringify(declared) !== JSON.stringify(RULESET_IDS)) throw new Error('manifest rule_resources must be ' + RULESET_IDS.join(', '));
 meta.total = Object.values(meta.rulesets).reduce((n, r) => n + r.rules, 0);
 meta.enabledAtInstall = mf.declarative_net_request.rule_resources.filter(r => r.enabled).reduce((n, r) => n + meta.rulesets[r.id].rules, 0);
-meta.defaultOn = LISTS.reduce((n, l) => n + meta.rulesets[l.id].rules, 0);
+meta.defaultOn = DEFAULT_ON.reduce((n, id) => n + meta.rulesets[id].rules, 0);
+meta.allLists = LISTS.reduce((n, l) => n + meta.rulesets[l.id].rules, 0);
+for (const [g, v] of Object.entries(meta.groups)) { v.rules = v.lists.reduce((n, id) => n + meta.rulesets[id].rules, 0); v.bundles = registered.filter(b => b.group === g).length; }
 meta.regex = regexTotal;
 meta.skipped = skippedAll;
 fs.writeFileSync(path.join(OUT, 'meta.json'), JSON.stringify(meta, null, 1));
 console.log(`\ncosmetic: ${JSON.stringify(meta.cosmetic)}`);
+for (const [g, v] of Object.entries(meta.groups)) console.log(`group ${g} (${v.on ? 'on' : 'off'} by default): ${v.rules} rules, ${v.bundles} scriptlet bundles, cosmetic ${JSON.stringify(v.cosmetic)}`);
 console.log(`scriptlets: ${meta.scriptlets.filtersUsed} filters in ${registered.length} bundles; skipped ${meta.scriptlets.filtersSkipped}:`, skipped);
-console.log(`total ${meta.total} rules (${regexTotal} regex); default lists ${meta.defaultOn}; enabled at install ${meta.enabledAtInstall} (guaranteed ${GUARANTEED})`);
+console.log(`total ${meta.total} rules (${regexTotal} regex); default lists ${meta.defaultOn}; every list ${meta.allLists}; enabled at install ${meta.enabledAtInstall} (guaranteed ${GUARANTEED})`);
 console.log('skipped filters:', Object.entries(skippedAll).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => `${k}: ${v}`).join(', '));
 if (!sample) {
   // what the YouTube filters became (CI log)

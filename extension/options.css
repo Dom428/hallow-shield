@@ -1,0 +1,35 @@
+:root { --bg: #14101b; --panel: #1f1929; --line: #3a3248; --text: #ece8f4; --muted: #a59cb6; --accent: #f07820; --bad: #ff7a7a; --good: #7ad49a; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 8px; padding: 16px 24px 8px; font-size: 17px; letter-spacing: .04em; }
+header img { width: 24px; height: 24px; }
+.brand { color: var(--accent); font-weight: 700; }
+main { max-width: 900px; padding: 0 24px 32px; }
+section { margin: 12px 0; padding: 16px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+h1, h2 { margin: 0 0 6px; font-size: 18px; } h2 { font-size: 15px; }
+p { margin: 6px 0; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.help { margin: 6px 0 12px; padding-left: 18px; line-height: 1.5; }
+code { font: 12.5px Consolas, monospace; background: #14101b; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--text); }
+textarea { width: 100%; min-height: 300px; resize: vertical; padding: 10px; background: #14101b; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+  font: 13px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre; tab-size: 4; }
+textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.bar { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.spacer { flex: 1; }
+button { padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: #3a3248; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #14101b; border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+#status:empty, #summary:empty { display: none; }
+#status.ok { color: var(--good); } #status.bad { color: var(--bad); }
+.errors { margin: 8px 0 0; padding-left: 0; list-style: none; }
+.errors li { padding: 5px 8px; margin-top: 4px; border-left: 3px solid var(--bad); background: rgba(255, 122, 122, .07); border-radius: 4px; font-size: 12.5px; }
+.errors li b { color: var(--bad); }
+.errors li code { word-break: break-all; }
+.zapped { list-style: none; padding: 0; margin: 8px 0 0; }
+.zapped li { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); }
+.zapped li:first-child { border-top: 0; }
+.zapped li code { flex: 1; word-break: break-all; }
+.zapped li button { padding: 3px 10px; font-size: 12px; }
+.zapped:empty::after { content: 'Nothing yet.'; color: var(--muted); font-size: 12.5px; }

@@ -2,13 +2,39 @@
   "manifest_version": 3,
   "name": "Hallow Shield",
   "short_name": "Shield",
-  "version": "1.1",
-  "description": "Blocks ads, trackers and YouTube ads - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
-  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "action": { "default_popup": "popup.html", "default_title": "Hallow Shield", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
-  "background": { "service_worker": "background.js", "type": "module" },
-  "permissions": ["declarativeNetRequest", "storage", "scripting", "activeTab"],
-  "host_permissions": ["<all_urls>"],
+  "version": "1.2",
+  "description": "Blocks ads, trackers, YouTube ads and cookie banners - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Hallow Shield",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "declarative_net_request": {
     "rule_resources": [
       { "id": "ublock-filters", "enabled": true, "path": "rules/ublock-filters.json" },
@@ -19,9 +45,23 @@
       { "id": "ublock-unbreak", "enabled": true, "path": "rules/ublock-unbreak.json" },
       { "id": "ublock-quick-fixes", "enabled": true, "path": "rules/ublock-quick-fixes.json" },
       { "id": "plowe", "enabled": true, "path": "rules/plowe.json" },
+      { "id": "ublock-cookies", "enabled": true, "path": "rules/ublock-cookies.json" },
+      { "id": "easylist-cookies", "enabled": true, "path": "rules/easylist-cookies.json" },
+      { "id": "ublock-annoyances", "enabled": false, "path": "rules/ublock-annoyances.json" },
+      { "id": "fanboy-annoyances", "enabled": false, "path": "rules/fanboy-annoyances.json" },
+      { "id": "fanboy-social", "enabled": false, "path": "rules/fanboy-social.json" },
       { "id": "popups", "enabled": false, "path": "rules/popups.json" }
     ]
   },
-  "web_accessible_resources": [{ "resources": ["web/*"], "matches": ["<all_urls>"] }],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "web/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
   "minimum_chrome_version": "120"
 }

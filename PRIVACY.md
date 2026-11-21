@@ -12,8 +12,15 @@
     Sponsored"). It reads nothing else and sends nothing anywhere.
   - the lists' small page fixes ("scriptlets") on the sites the lists name - for example the ones that remove the ad
     data from YouTube's player responses. They change how the page behaves inside your browser and send nothing.
+- **The element zapper** ("Hide something on this page" / "Zap once") is injected only into the tab you opened the
+  popup on, and only when you click the button (the browser's "activeTab" access). It looks at the page in your
+  browser to work out a selector for what you point at. "Hide" saves that rule (`site##selector`) in My filters;
+  "Zap once" saves nothing. Nothing is sent anywhere.
+- **My filters** (the options page) are converted inside the extension when you save them and handed to the browser as
+  its own rules. Export writes them to a text file on your PC; import reads a file you pick. They are never uploaded.
 - **What is stored, on your PC only** (browser extension storage): your blocking level, which lists you switched off,
-  and the sites you paused Shield on.
+  the cookie-banner and annoyance switches, the sites you paused Shield on, and My filters (including what you hid with
+  the zapper).
 - **The count in the popup** comes from the browser, for the tab you opened the popup on, and is never stored.
 - **Report a broken site** only copies a short text to your clipboard (the page address without its query string,
   Shield's version, level and list versions, your browser's version). Shield sends nothing - you choose whether and

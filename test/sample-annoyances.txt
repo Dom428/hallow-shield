@@ -1,0 +1,6 @@
+! Title: Hallow Shield test annoyance list (written for the tests - not Fanboy's Annoyances)
+! Version: test-1
+##.newsletter-popup
+##.chat-bubble
+cookie.test##.social-share
+||chat-widget.example^$script,third-party

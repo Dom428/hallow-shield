@@ -1,12 +1,14 @@
 Hallow Shield's blocking rules, cosmetic filters and scriptlet data (everything in rules/) are converted from these
 filter lists. The lists are data with their own licenses; Hallow Shield's code is its own.
 
-  uBlock filters, uBlock filters - Badware risks, - Privacy, - Unbreak, - Quick fixes
+  uBlock filters, uBlock filters - Badware risks, - Privacy, - Unbreak, - Quick fixes, - Cookie notices, - Annoyances
       https://github.com/uBlockOrigin/uAssets   by Raymond Hill and the uBlock Origin contributors
       License: GNU General Public License version 3 (https://www.gnu.org/licenses/gpl-3.0.html)
 
-  EasyList, EasyPrivacy
-      https://easylist.to/   by The EasyList authors
+  EasyList, EasyPrivacy, EasyList Cookie List, Fanboy's Annoyance List (newsletters, notifications, chat, other
+  annoyances) and Fanboy's Social Blocking List
+      https://easylist.to/   by The EasyList authors and Fanboy (the annoyance lists as split by kind and mirrored in
+      https://github.com/uBlockOrigin/uAssets/tree/master/thirdparties/easylist)
       License: dual licensed under the GNU General Public License version 3 and the Creative Commons
       Attribution-ShareAlike 3.0 Unported license (https://creativecommons.org/licenses/by-sa/3.0/)
 

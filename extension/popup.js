@@ -1,6 +1,6 @@
-// Hallow Shield popup: this site (pause / resume) and what was blocked on it, the blocking level, the lists (Advanced),
-// and "Report a broken site" (copies the details to your clipboard - Shield sends nothing anywhere).
-import { siteOf, validDomain, LEVELS, DEFAULT_LEVEL, PAUSE_BASE } from './shared.js';
+// Hallow Shield popup: this site (pause / resume) and what was blocked on it, the blocking level, the cookie-banner and
+// annoyance switches, the element zapper and My filters, the lists (Advanced), and "Report a broken site" (copies the details to your clipboard - Shield sends nothing anywhere).
+import { siteOf, validDomain, LEVELS, DEFAULT_LEVEL, PAUSE_BASE, USER_BASE } from './shared.js';
 const ext = globalThis.browser ?? chrome;
 const $ = id => document.getElementById(id);
 
@@ -8,7 +8,7 @@ const $ = id => document.getElementById(id);
 const forTab = Number(new URLSearchParams(location.search).get('tab'));
 const tab = forTab ? await ext.tabs.get(forTab) : (await ext.tabs.query({ active: true, currentWindow: true }))[0];
 const site = tab && siteOf(tab.url);
-const s = await ext.storage.local.get({ paused: [], level: DEFAULT_LEVEL, lists: {}, fallback: {}, fallbackNotBlock: [] });
+const s = await ext.storage.local.get({ paused: [], level: DEFAULT_LEVEL, lists: {}, cookies: true, annoyances: false, myFilters: '', fallback: {}, fallbackNotBlock: [], userNotBlock: [] });
 if (!LEVELS.includes(s.level)) s.level = DEFAULT_LEVEL;
 const meta = await (await fetch(ext.runtime.getURL('rules/meta.json'))).json();
 const version = ext.runtime.getManifest().version;
@@ -42,14 +42,56 @@ function showLevel() {
   $('levelText').textContent = LEVEL_TEXT[s.level] + (s.level !== 'basic' && !access ? ' Shield can\'t access sites yet:' : '');
   $('grant').hidden = s.level === 'basic' || access;
 }
-for (const b of document.querySelectorAll('.seg button')) b.onclick = async () => { s.level = b.dataset.level; await ext.storage.local.set({ level: s.level }); showLevel(); };
+for (const b of document.querySelectorAll('.seg button')) b.onclick = async () => { s.level = b.dataset.level; await ext.storage.local.set({ level: s.level }); showLevel(); showGroups(); };
 $('grant').onclick = async () => { try { access = await ext.permissions.request({ origins: ['<all_urls>'] }); } catch { } showLevel(); };
 showLevel();
 
-// Advanced: the lists
+// cookie banners (on by default) and other annoyances (off by default): each switch turns a group of lists on or off
+const GROUPS = ['cookies', 'annoyances'];
+const groupIsOn = g => g === 'cookies' ? s.cookies !== false : g === 'annoyances' ? s.annoyances === true : true;
+function showGroups() {
+  for (const g of GROUPS) for (const box of document.querySelectorAll(`input[data-group="${g}"]`)) box.checked = groupIsOn(g);
+  for (const lab of document.querySelectorAll('#lists label[data-in]')) lab.classList.toggle('off', !groupIsOn(lab.dataset.in));
+  $('hideNote').textContent = s.level === 'basic' && (s.cookies !== false || s.annoyances) ? 'At Basic only their blocking rules apply: choose Optimal to hide banners too.' : '';
+}
+async function setGroup(g, on) { s[g] = on; await ext.storage.local.set({ [g]: on }); showGroups(); }
+$('cookies').dataset.group = 'cookies'; $('annoyances').dataset.group = 'annoyances';
+$('cookies').onchange = () => setGroup('cookies', $('cookies').checked);
+$('annoyances').onchange = () => setGroup('annoyances', $('annoyances').checked);
+
+// the element zapper: injected into this tab only when you click (activeTab + scripting)
+async function pick(mode) {
+  if (!tab || !site) { $('pickNote').textContent = 'The zapper works on web pages (http and https).'; return; }
+  try {
+    await ext.scripting.executeScript({ target: { tabId: tab.id }, func: m => { globalThis.__hallowShieldPickMode = m; }, args: [mode] });
+    await ext.scripting.executeScript({ target: { tabId: tab.id }, files: ['picker-core.js', 'picker.js'] });
+    $('pickNote').textContent = mode === 'zap' ? 'Click what you want gone from this page.' : 'Point at it on the page, then click. Esc cancels.';
+    if (!forTab) window.close();
+  } catch { $('pickNote').textContent = 'Shield can\'t run on this page (browser pages and extension stores are off limits).'; }
+}
+$('pick').onclick = () => pick('hide');
+$('zap').onclick = () => pick('zap');
+$('myfilters').onclick = () => { ext.runtime.openOptionsPage(); if (!forTab) window.close(); };
+
+// Advanced: the lists, by group (a group's box is the same switch as above)
 const fmt = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
+const GROUP_TITLE = { main: 'Ads, privacy and security', cookies: 'Cookie banners (on by default)', annoyances: 'Annoyances (off by default)' };
+let lastGroup = '';
 for (const [id, l] of Object.entries(meta.lists)) {
+  const g = l.group || 'main';
+  if (g !== lastGroup) {
+    lastGroup = g;
+    const h = document.createElement(g === 'main' ? 'div' : 'label'); h.className = 'group';
+    if (g !== 'main') {
+      const gb = document.createElement('input'); gb.type = 'checkbox'; gb.dataset.group = g;
+      gb.onchange = () => setGroup(g, gb.checked);
+      h.append(gb);
+    }
+    h.append(document.createTextNode(GROUP_TITLE[g] || g));
+    $('lists').append(h);
+  }
   const lab = document.createElement('label');
+  if (g !== 'main') lab.dataset.in = g;
   const box = document.createElement('input'); box.type = 'checkbox'; box.checked = s.lists[id] !== false; box.dataset.list = id;
   box.onchange = async () => { s.lists = { ...s.lists, [id]: box.checked }; await ext.storage.local.set({ lists: s.lists }); };
   const name = document.createElement('span'); name.textContent = l.name;
@@ -57,6 +99,7 @@ for (const [id, l] of Object.entries(meta.lists)) {
   n.title = `${l.network} network filters, ${l.cosmetic} cosmetic, ${l.scriptlets} scriptlets - version ${l.version}`;
   lab.append(box, name, n); $('lists').append(lab);
 }
+showGroups();
 const fb = Object.entries(s.fallback || {});
 $('room').textContent = fb.length ? 'Not enough room in the browser\'s shared rule pool for ' + fb.map(([id, f]) => `${meta.lists[id]?.name || id} (${f.loaded} of ${f.of} rules loaded as dynamic rules)`).join(', ') + '.'
   : `Lists built ${meta.built.slice(0, 10)}. They update with new Shield versions.`;
@@ -65,9 +108,9 @@ $('room').textContent = fb.length ? 'Not enough room in the browser\'s shared ru
 let blocked = null;
 try {
   const m = await ext.declarativeNetRequest.getMatchedRules({ tabId: tab.id });
-  const notBlock = new Set(s.fallbackNotBlock);
+  const notBlock = new Set(s.fallbackNotBlock), userNotBlock = new Set(s.userNotBlock);
   blocked = m.rulesMatchedInfo.filter(({ rule: r }) => {
-    if (r.rulesetId === '_dynamic') return r.ruleId < PAUSE_BASE && !notBlock.has(r.ruleId);
+    if (r.rulesetId === '_dynamic') return r.ruleId < PAUSE_BASE ? !notBlock.has(r.ruleId) : r.ruleId >= USER_BASE && !userNotBlock.has(r.ruleId);
     const rs = meta.rulesets[r.rulesetId];   // in each ruleset: exceptions first, then header/parameter rules, then blocks
     return rs && r.ruleId > rs.allow + rs.modify;
   }).length;
@@ -79,13 +122,14 @@ try {
 $('report').onclick = async () => {
   let page = '-';
   try { const u = new URL(tab.url); page = u.origin + u.pathname; } catch { }
-  const on = Object.keys(meta.lists).filter(id => s.lists[id] !== false);
+  const on = Object.keys(meta.lists).filter(id => s.lists[id] !== false && groupIsOn(meta.lists[id].group));
   const text = [
     'Hallow Shield broken-site report',
     `Page: ${page}`,
     `Shield: ${version} (lists built ${meta.built.slice(0, 10)})`,
     `Browser: ${navigator.userAgent}`,
     `Blocking: ${s.level}${paused() ? ' (paused on this site)' : ''}${access ? '' : ' (no site access)'}`,
+    `Hide cookie banners: ${s.cookies !== false ? 'on' : 'off'}; hide annoyances: ${s.annoyances ? 'on' : 'off'}; my filters: ${s.myFilters.split('\n').filter(l => l.trim() && !l.trim().startsWith('!')).length}`,
     `Lists: ${on.map(id => `${meta.lists[id].name} ${meta.lists[id].version}`).join('; ')}`,
     `Blocked on this page: ${blocked ?? '-'}`,
     fb.length ? `Dynamic fallback: ${fb.map(([id, f]) => `${id} ${f.loaded}/${f.of}`).join(', ')}` : '',
