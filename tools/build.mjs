@@ -58,7 +58,11 @@ async function read(list) {
   fs.writeFileSync(path.join(ROOT, '.lists', list.id + '.txt'), text);
   return text;
 }
-const version = t => (t.match(/^! (?:Version|Last modified): (.+)$/m) || [])[1]?.trim() || (t ? 'local' : 'none');
+// the list's own version line; uBO's lists carry a "%timestamp%" placeholder, so those get the day they were fetched
+const version = t => {
+  for (const m of t.matchAll(/^! (?:Version|Last modified|Last updated|Updated): (.+)$/gm)) if (!m[1].includes('%')) return m[1].trim();
+  return !t ? 'none' : offline ? 'local' : 'fetched ' + new Date().toISOString().slice(0, 10);
+};
 const hash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) % SHARDS; };
 const withIds = rules => rules.map((r, i) => ({ id: i + 1, ...r }));
 

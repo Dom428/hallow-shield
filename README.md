@@ -3,44 +3,79 @@
 An ad and tracker blocker for **Chrome, Edge, Brave, Opera and Firefox** - part of the Hallow family with
 [Hallow Keys](https://github.com/Dom428/hallow-keys), [Hallow Hub](https://github.com/Dom428/hallow-hub) and the others.
 
-- **Blocks ads and trackers** with the community's [EasyList and EasyPrivacy](https://easylist.to/) filter lists, rebuilt
-  from the newest lists every week.
-- **Fast and private:** the browser blocks the requests itself (Manifest V3 `declarativeNetRequest`). Hallow Shield's code
-  never sees what you browse, and there's no Hallow server. See [PRIVACY.md](PRIVACY.md).
-- **Hides empty ad boxes** - on every site, and site by site as the lists say (and shows a box again where a list says
-  a site needs it).
-- **Pause on this site** in one click (for a site that breaks, or one you want to support), and switches for ads,
-  trackers and ad boxes.
-- The popup shows how many ads and trackers were blocked on the page you're looking at.
+Shield aims to block like Brave Shields and uBlock Origin Lite, within what Manifest V3 allows:
+
+- **The lists the good blockers use:** uBlock filters (+ Badware risks, Privacy, Unbreak, Quick fixes), EasyList,
+  EasyPrivacy and Peter Lowe's list, rebuilt from the newest versions every week. Switch any of them off under
+  **Advanced** in the popup.
+- **YouTube ads:** uBlock Origin's YouTube filters run on YouTube - the ad data is removed from the player's
+  initial data and from its player API responses (fetch and XHR) before the player sees it.
+- **Fast and private:** the browser blocks requests itself (`declarativeNetRequest`). Shield's code never sees what
+  you browse, there's no Hallow server, and the extension never downloads anything. See [PRIVACY.md](PRIVACY.md).
+- **More than plain blocking:** regex filters (checked by the browser at build time), `$redirect` to Shield's own
+  harmless stand-ins (so pages that expect an ad library keep working), `$removeparam` (tracking parameters such as
+  `utm_source` and `fbclid` stripped), `$csp`, `$important`, `$badfilter`, `$denyallow`, `$to`/`$from`, `$document`
+  blocking of badware sites, and strict blocking of pop-up ad sites.
+- **Hides what's left:** ad boxes hidden on every site and site by site, procedural filters (`:has-text`, `:upward`,
+  `:has`, `:matches-css`, `:remove`, `:style`, `:xpath`, ...) that keep working as the page changes, and the lists'
+  exceptions (`#@#`, `$generichide`, `$elemhide`).
+- **Page fixes (scriptlets):** Shield's own versions of the uBO scriptlets the lists use most - `set-constant`,
+  `json-prune` (+ fetch / XHR response), `abort-on-property-read/write`, `abort-current-script`, `prevent-fetch`,
+  `prevent-xhr`, `prevent-setTimeout/setInterval`, `remove-attr/class`, `remove/replace-node-text`,
+  `trusted-replace-fetch/xhr-response`, `no-window-open-if`, `addEventListener-defuser`, `adjust-setTimeout/setInterval`
+  and more (38 in all) - running in the page at document start on the sites the lists name.
+- **Blocking: Basic / Optimal / Complete,** like uBO Lite. *Basic* blocks requests only and runs nothing in pages.
+  *Optimal* (the default) adds ad-box hiding and the page fixes on the sites Shield may access. *Complete* adds strict
+  blocking of pop-up and pop-under ad sites.
+- **Pause on this site** in one click, a per-page blocked count, and **Report a broken site**, which copies the
+  details to your clipboard (nothing is sent).
 
 ## Install
 
 Download the zip for your browser from the [latest release](https://github.com/Dom428/hallow-shield/releases/latest)
-(`hallow-shield-chrome-1.0.zip` or `hallow-shield-firefox-1.0.zip`) and unzip it into a folder of its own:
+(`hallow-shield-chrome-1.1.zip` or `hallow-shield-firefox-1.1.zip`) and unzip it into a folder of its own:
 
 - **Chrome, Edge, Brave, Opera:** open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode**,
-  click **Load unpacked** and pick that folder. Keep the folder - the browser loads Shield from it.
-- **Firefox:** open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, pick `manifest.json` in the
-  unzipped folder (temporary until the add-on is signed on addons.mozilla.org). Firefox asks you
-  to allow access to all sites - Shield needs it to hide ad boxes.
+  click **Load unpacked** and pick that folder. Keep the folder - the browser loads Shield from it. To update, unzip
+  the new version over the same folder and click the reload arrow on Shield's card.
+- **Firefox (128 or newer):** open `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, pick
+  `manifest.json` in the unzipped folder (temporary until the add-on is signed on addons.mozilla.org). Firefox asks
+  you to allow access to all sites - Shield needs it to hide ad boxes and fix YouTube; the popup has a button for it.
 
-## Honest limits
+## Honest limits (compared with Brave Shields and uBlock Origin)
 
-- **YouTube ads** change their tricks constantly and need code that runs inside the page; Shield doesn't promise to block
-  them. [uBlock Origin Lite](https://github.com/uBlockOrigin/uBOL-home) is the reference for that.
-- Chrome guarantees every extension **30,000** blocking rules; Shield uses up to 20,000 from EasyList and 10,000 from
-  EasyPrivacy, the most specific ones first. Filters the browser can't express (regular expressions, redirects,
-  scriptlets, `$csp`, `$popup`, procedural cosmetics) are left out - `rules/meta.json` and the build log say how many.
+- **Manifest V3 limits apply.** Shield can't do what full uBlock Origin does with its own network code: no
+  `$redirect-rule` for broad patterns (311 skipped), no `$replace`/`$urlskip`/`$header`/`$cname`, no HTML filtering
+  (`##^`), no regex `$removeparam`, no entity domains (`site.*`) in network filters (about 340 skipped). Cosmetic and
+  scriptlet filters *do* support entities.
+- **About 470 of ~10,300 scriptlet filters are skipped** - the ones using scriptlets Shield doesn't implement yet
+  (`json-edit*`, `trusted-edit-inbound-object`, `trusted-replace-argument`, `href-sanitizer`, `trusted-prevent-dom-bypass`,
+  ...). A handful of these are YouTube quick fixes; the main YouTube filters (initial data, player API) all run.
+- **YouTube changes often.** The YouTube filters are uBO's; Shield is tested against a local page shaped like
+  YouTube's (initial player data + player API), not against youtube.com itself, and gets uBO's fixes only when a new
+  Shield version is built (weekly) - full uBO updates its lists more often.
+- **Rule room:** with all lists on, Shield uses about 20,500 rules, inside the 30,000 Chrome guarantees every extension
+  (host filters are merged into shared rules, as uBO Lite does). If a list ever didn't fit, Shield loads it as dynamic
+  rules instead and says so under Advanced. Regex rules: about 145 of the browser's 1,000; ones the browser refuses
+  are left out at build time.
+- **Pop-ups:** the browser can't tell a pop-up from any other new tab, so `$popup` filters only become rules for whole
+  ad hosts opened from another site, and only at *Complete*.
+- **Firefox:** the Firefox package is built and linted in CI, but the end-to-end tests run in Chromium only.
 
 ## Building
 
-- `npm install`, then `npm run rules` (downloads the newest EasyList and EasyPrivacy and converts them),
-  `npm run package` (zips into `dist/`).
-- Tests: `npm test` (the converter), `npm run rules:sample && npm run e2e` (the real extension in Chromium against
-  test pages: blocking, exceptions, ad boxes, pause, switches, the count), `node test/smoke-real.mjs` (the real rules
-  block real ad servers). CI runs all of them on every push and every Monday.
+- `npm install`, then `npm run rules` (downloads the newest lists and converts them), `npm run regex` (Chromium checks
+  every regex rule), `npm run package` (zips into `dist/`).
+- Tests: `npm test` (converter and scriptlets), `npm run rules:sample && npm run e2e` (the real extension in Chromium
+  against local test pages: blocking, redirects, `$removeparam`, `$csp`, procedural filters, scriptlets, a fake YouTube
+  page, pause, levels, lists, the dynamic-rule fallback, the popup), `npm run smoke` (the real rules: they all load,
+  real ad servers are blocked, and uBO's real YouTube filters clean a fake YouTube page). CI runs all of them on every
+  push and every Monday. `node tools/explain.mjs <url> <page>` shows which filters touch a request and what became of
+  them.
 
 ## Credits
 
-Filter lists: EasyList and EasyPrivacy by The EasyList authors, CC BY-SA 3.0 / GPLv3 - see
-[extension/LISTS-LICENSE.txt](extension/LISTS-LICENSE.txt). The converted rules carry the same CC BY-SA 3.0 license.
+- Filter lists: uBlock filters by Raymond Hill and contributors (GPLv3); EasyList and EasyPrivacy by The EasyList
+  authors (GPLv3 / CC BY-SA 3.0); Peter Lowe's list. See [extension/LISTS-LICENSE.txt](extension/LISTS-LICENSE.txt).
+- The approach follows [uBlock Origin Lite](https://github.com/uBlockOrigin/uBOL-home) (GPLv3). Shield's converter,
+  scriptlets, procedural filter engine and redirect stand-ins are its own code - no uBO code is included.
