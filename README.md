@@ -59,7 +59,7 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
 ## Install
 
 Download the zip for your browser from the [latest release](https://github.com/Dom428/hallow-shield/releases/latest)
-(`hallow-shield-chrome-1.3.zip` or `hallow-shield-firefox-1.3.zip`) and unzip it into a folder of its own - or let
+(`hallow-shield-chrome-1.4.zip` or `hallow-shield-firefox-1.4.zip`) and unzip it into a folder of its own - or let
 [Hallow Setup](https://github.com/Dom428/hallow-setup) 1.6 do it (it checks GitHub's checksum and keeps the folder up to
 date). Each zip has a `version.json` with its version and build date.
 

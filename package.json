@@ -1,6 +1,6 @@
 {
   "name": "hallow-shield",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Hallow Shield - an ad and tracker blocker for Chrome, Edge, Brave, Opera and Firefox (Manifest V3).",
   "type": "module",
