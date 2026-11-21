@@ -162,9 +162,9 @@ test('stats: what counts as a block, and as ads / trackers / other; the host a r
   assert.equal(domainOfRule({ condition: { urlFilter: '/banner/' } }), null);
 });
 
-test('the version is 1.3 everywhere, and the zips get a version.json', () => {
+test('the version is 1.4 everywhere, and the zips get a version.json', () => {
   const mf = JSON.parse(read('../extension/manifest.json')), pkg = JSON.parse(read('../package.json'));
-  assert.equal(mf.version, '1.3'); assert.equal(pkg.version, '1.3.0');
+  assert.equal(mf.version, '1.4'); assert.equal(pkg.version, '1.4.0');
   assert.ok(mf.permissions.includes('alarms')); assert.ok(!mf.permissions.includes('declarativeNetRequestFeedback'), 'feedback access stays optional');
   assert.deepEqual(mf.optional_permissions, ['declarativeNetRequestFeedback']);
   assert.match(read('../tools/package.mjs'), /version\.json/);
