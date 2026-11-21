@@ -63,15 +63,18 @@ const LISTS = Object.keys(L);
 await until(async () => {
   const on = await sw.evaluate(() => chrome.declarativeNetRequest.getEnabledRulesets());
   const fb = (await sw.evaluate(async () => (await chrome.storage.local.get('fallback')).fallback)) || {};
-  return LISTS.every(id => on.includes(id) || fb[id]);
-}, 20000);
+  const done = (await sw.evaluate(async () => (await chrome.storage.local.get('scriptErrors')).scriptErrors)) !== undefined;
+  return done && LISTS.every(id => on.includes(id) || fb[id]);
+}, 30000);
 const state = await sw.evaluate(async () => ({
   on: await chrome.declarativeNetRequest.getEnabledRulesets(), room: await chrome.declarativeNetRequest.getAvailableStaticRuleCount(),
   fallback: (await chrome.storage.local.get('fallback')).fallback || {}, dynamic: (await chrome.declarativeNetRequest.getDynamicRules()).length,
-  scripts: (await chrome.scripting.getRegisteredContentScripts()).length,
+  scripts: (await chrome.scripting.getRegisteredContentScripts()).length, scriptErrors: (await chrome.storage.local.get('scriptErrors')).scriptErrors,
 }));
 const enabledRules = state.on.reduce((n, id) => n + (meta.rulesets[id]?.rules || 0), 0);
 console.log('enabled rulesets:', state.on.join(', '), `= ${enabledRules} rules; shared-pool room left ${state.room}; dynamic fallback ${JSON.stringify(state.fallback)} (${state.dynamic} dynamic rules); ${state.scripts} content scripts`);
+console.log('content script errors:', JSON.stringify(state.scriptErrors));
+assert.ok(state.scripts >= 3 + meta.scriptlets.bundles, 'content scripts registered: ' + state.scripts);
 for (const id of LISTS) assert.ok(state.on.includes(id) || state.fallback[id]?.loaded > 0, id + ' neither enabled nor loaded as dynamic rules');
 
 // every regex rule accepted by the browser
@@ -85,7 +88,7 @@ assert.ok(regexes.length <= 1000);
 const samples = [];
 for (const id of state.on) {
   const rules = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', id + '.json'), 'utf8'))
-    .filter(r => r.action.type === 'block' && r.condition.requestDomains && !r.condition.initiatorDomains && !r.condition.excludedRequestDomains && !r.condition.excludedInitiatorDomains && r.condition.resourceTypes.includes('script') && r.condition.domainType !== 'firstParty');
+    .filter(r => r.action.type === 'block' && r.condition.requestDomains && !r.condition.urlFilter && !r.condition.regexFilter && !r.condition.requestMethods && !r.condition.initiatorDomains && !r.condition.excludedRequestDomains && !r.condition.excludedInitiatorDomains && r.condition.resourceTypes.includes('script') && r.condition.domainType !== 'firstParty');
   for (const r of rules.slice(0, 15)) samples.push({ id, rule: r.id, url: `https://${r.condition.requestDomains[r.condition.requestDomains.length - 1]}/x.js` });
 }
 const outcomes = await sw.evaluate(async list => {

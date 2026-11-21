@@ -102,13 +102,21 @@ async function syncScripts() {
   }
   const old = (await ext.scripting.getRegisteredContentScripts()).map(c => c.id);
   if (old.length) await ext.scripting.unregisterContentScripts({ ids: old }).catch(() => { });
-  if (!scripts.length) return;
-  try { await ext.scripting.registerContentScripts(scripts.map(c => ({ ...c, persistAcrossSessions: true }))); }
-  catch {
-    // older browsers: no persistAcrossSessions (re-registered at startup), or no MAIN world (scriptlets left out)
-    try { await ext.scripting.registerContentScripts(scripts); }
-    catch (e) { console.warn('Hallow Shield: scripts', e); await ext.scripting.registerContentScripts(scripts.filter(c => !c.world)).catch(() => { }); }
+  const errors = [];
+  if (scripts.length) {
+    try { await ext.scripting.registerContentScripts(scripts.map(c => ({ ...c, persistAcrossSessions: true }))); }
+    catch {
+      // one at a time, so one the browser refuses doesn't take the others with it (older browsers: without
+      // persistAcrossSessions - re-registered at startup - or without the MAIN world)
+      for (const c of scripts) {
+        const tries = [{ ...c, persistAcrossSessions: true }, c];
+        let ok = false, last = null;
+        for (const t of tries) { try { await ext.scripting.registerContentScripts([t]); ok = true; break; } catch (e) { last = e; } }
+        if (!ok) errors.push(`${c.id}: ${last && last.message}`);
+      }
+    }
   }
+  await ext.storage.local.set({ scriptErrors: errors });
 }
 
 let queue = Promise.resolve();
@@ -120,7 +128,7 @@ ext.runtime.onStartup?.addListener(() => syncAll());
 ext.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   const k = Object.keys(changes);
-  if (k.every(x => x === 'fallback' || x === 'fallbackNotBlock')) return;
+  if (k.every(x => x === 'fallback' || x === 'fallbackNotBlock' || x === 'scriptErrors')) return;
   if (k.includes('paused')) serial(() => Promise.all([syncPauses(), syncScripts()]));
   if (k.some(x => x === 'level' || x === 'lists' || x === 'debugNoRoom')) serial(() => Promise.all([syncRulesets(), syncScripts()]));
 });
