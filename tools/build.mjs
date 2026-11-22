@@ -18,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { convertList, validRule, preprocess, badfilters, merge } from './convert.mjs';
-import { SCRIPTLETS, bundleSites } from './scriptlets.mjs';
+import { SCRIPTLETS, siteBundle, coreBundle } from './scriptlets.mjs';
 import { LISTS, POPUPS, RULESET_IDS, ENV, GROUPS, COSMETIC_GROUPS, DEFAULT_ON, cosmeticGroup } from './lists.mjs';
 import { genericKey } from '../extension/shared.js';
 
@@ -74,6 +74,7 @@ const withIds = rules => rules.map((r, i) => ({ id: i + 1, ...r }));
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(path.join(OUT, 'cosmetic'), { recursive: true });
 fs.mkdirSync(path.join(OUT, 'js'), { recursive: true });
+fs.mkdirSync(path.join(OUT, 'sl'), { recursive: true });
 
 // 1. read and preprocess every list; $badfilter applies across lists (uBO's lists cancel EasyList filters this way)
 const texts = {};
@@ -160,7 +161,7 @@ fs.writeFileSync(path.join(OUT, 'cosmetic-meta.json'), JSON.stringify({ shards: 
 
 // 3. scriptlets: one bundle per scriptlet with the sites and arguments it runs with
 const validHost = d => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d);
-const used = {}, skipped = {}, registered = [];
+const used = {}, skipped = {}, registered = [], coreNames = new Set();
 // the cookie lists' trusted-click-element filters -> rules/clicks.json { args: [[selectors, extraMatch, delay]], hosts: { key: [i] }, exc: { key: [i] (-1 = all) } }
 const CLICK = 'trusted-click-element';
 const clicks = { args: [], index: new Map(), hosts: {}, exc: {} };
@@ -236,10 +237,14 @@ function scriptletGroup(group) {
     }
   }
   const partsOf = m => Object.fromEntries(Object.entries(m).map(([c, hs]) => [c, subset(per[c], hs)]));
+  // 1.8: a small loader per bundle (ISOLATED world) + the sites' filters in shards (rules/sl/); the code is in core.js
   const write = (id, parts, matches, title) => {
-    const file = `rules/js/${prefix}${id}.js`, code = bundleSites(parts, title);
-    fs.writeFileSync(path.join(ROOT, 'extension', file), code);
-    registered.push({ id: prefix + id, group, file, matches, kb: Math.round(code.length / 1024) });
+    const bid = prefix + id, file = `rules/js/${bid}.js`, b = siteBundle(bid, parts, title);
+    fs.writeFileSync(path.join(ROOT, 'extension', file), b.loader);
+    b.shards.forEach((s, i) => fs.writeFileSync(path.join(OUT, 'sl', `${bid}-${i}.json`), s));
+    for (const n of b.names) coreNames.add(n);
+    registered.push({ id: bid, group, file, matches, world: 'ISOLATED', kb: Math.round(b.loader.length / 1024), sites: b.keys, shards: b.shards.length,
+      shardKb: Math.round(b.shards.reduce((n, s) => n + s.length, 0) / 1024) });
   };
   const size = m => Object.values(m).reduce((n, l) => n + l.length, 0);
   const big = Object.keys(byTld).filter(t => size(byTld[t]) >= 200).sort(), small = Object.keys(byTld).filter(t => !big.includes(t)).sort();
@@ -252,6 +257,12 @@ function scriptletGroup(group) {
   if (Object.keys(entityHosts).length) write('_entities', partsOf(entityHosts), ['*://*/*'], 'sites named as name.*');
 }
 for (const g of COSMETIC_GROUPS) scriptletGroup(g);
+// 1.8: the scriptlets' code once, for every frame where page fixes are on (registered first)
+if (registered.length) {
+  const core = coreBundle([...coreNames]);
+  fs.writeFileSync(path.join(OUT, 'js', 'core.js'), core);
+  registered.unshift({ id: 'core', group: '*', file: 'rules/js/core.js', matches: ['*://*/*'], world: 'MAIN', kb: Math.round(core.length / 1024) });
+}
 fs.writeFileSync(path.join(OUT, 'scriptlets.json'), JSON.stringify(registered));
 fs.writeFileSync(path.join(OUT, 'clicks.json'), JSON.stringify({ args: clicks.args, hosts: clicks.hosts, exc: clicks.exc }));
 meta.scriptlets = { implemented: Object.keys(SCRIPTLETS).length + 1, used, skipped, bundles: registered.length, clicks: { filters: used[CLICK] || 0, sites: Object.keys(clicks.hosts).length, distinct: clicks.args.length },
@@ -273,7 +284,7 @@ meta.skipped = skippedAll;
 fs.writeFileSync(path.join(OUT, 'meta.json'), JSON.stringify(meta, null, 1));
 console.log(`\ncosmetic: ${JSON.stringify(meta.cosmetic)}`);
 for (const [g, v] of Object.entries(meta.groups)) console.log(`group ${g} (${v.on ? 'on' : 'off'} by default): ${v.rules} rules, ${v.bundles} scriptlet bundles, cosmetic ${JSON.stringify(v.cosmetic)}`);
-console.log('scriptlet bundles (KB, match patterns): ' + registered.map(r => `${r.id} ${r.kb} KB/${r.matches.length}`).join(', '));
+console.log('scriptlet bundles (KB, match patterns; 1.8: sites, shards, KB of shards): ' + registered.map(r => `${r.id} ${r.kb} KB/${r.matches.length}` + (r.shards ? ` (${r.sites} sites, ${r.shards} shards, ${r.shardKb} KB)` : '')).join(', '));
 console.log(`scriptlets: ${meta.scriptlets.filtersUsed} filters in ${registered.length} bundles (+ ${meta.scriptlets.clicks.filters} cookie-banner click filters for ${meta.scriptlets.clicks.sites} sites); skipped ${meta.scriptlets.filtersSkipped}:`, skipped);
 console.log(`total ${meta.total} rules (${regexTotal} regex); default lists ${meta.defaultOn}; every list ${meta.allLists}; enabled at install ${meta.enabledAtInstall} (guaranteed ${GUARANTEED})`);
 console.log('skipped filters:', Object.entries(skippedAll).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => `${k}: ${v}`).join(', '));
@@ -282,6 +293,14 @@ if (!sample) {
   console.log('\nYouTube scriptlet filters:');
   for (const s of sl) if ([...s.inc, ...s.exc].some(d => /(^|\.)youtube(-nocookie|kids)?\.com$/.test(d)))
     console.log(`  ${s.unsupported || !SCRIPTLETS[s.canonical] ? 'SKIPPED' : s.exception ? 'EXCEPT ' : 'ok     '} [${s.list}] ${s.inc.join(',')}##+js(${[s.name, ...s.args].join(', ')})`.slice(0, 400));
+  // 1.8: Twitch's filters, and the scriptlet filters Shield still skips (CI log)
+  console.log('\nTwitch scriptlet filters:');
+  for (const s of sl) if ([...s.inc, ...s.exc].some(d => /(^|\.)(twitch\.tv|ttvnw\.net)$/.test(d)))
+    console.log(`  ${s.unsupported || !SCRIPTLETS[s.canonical] ? 'SKIPPED' : s.exception ? 'EXCEPT ' : 'ok     '} [${s.list}] ${s.inc.join(',')}##+js(${[s.name, ...s.args].join(', ')})`.slice(0, 400));
+  const left = {};
+  console.log('\nskipped scriptlet filters (up to 25 of each):');
+  for (const s of sl) if ((s.unsupported || !SCRIPTLETS[s.canonical]) && s.canonical !== CLICK && !s.exception && (left[s.name] = (left[s.name] || 0) + 1) <= 25)
+    console.log(`  [${s.list}] ${s.inc.slice(0, 4).join(',')}##+js(${[s.name, ...s.args].join(', ')})`.slice(0, 500));
   // 1.5: a sample of the real filters the new scriptlets run, to check them against (CI log)
   const NEW = /^(trusted-)?(json-edit|jsonl-edit|edit-(in|out)bound-object)|^trusted-replace-argument$|^href-sanitizer$|^trusted-prevent-dom-bypass$/;
   const count = {};

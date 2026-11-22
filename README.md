@@ -40,7 +40,8 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
   you browse, there's no Hallow server, and the extension never downloads anything. See [PRIVACY.md](PRIVACY.md).
   **Measured in CI** on every build (`npm run perf`): a heavy local page (about 4,000 elements, 140 images and
   scripts, 6 frames, 20 ms per response) loads in 513 ms without Shield and 559 ms with Shield at Optimal and the real
-  lists (+46 ms, 9 %; Shield's content scripts and page fixes: 17 ms of script time). With the same page served
+  lists (1.5: +46 ms, 9 %; 1.8: +39 ms, 6.7 %, on a slower CI machine - Shield's content scripts and page fixes: 18 ms
+  of script time). With the same page served
   instantly it's +59 ms - most of that is the browser applying 24,000 blocking rules to 140 requests; Shield 1.4 added
   about 300 ms to that instant page (see Honest limits). The build fails if Shield adds more than 15 % or 50 ms (a CI
   machine has noisy minutes, so a round over budget gets up to two fresh rounds).
@@ -59,8 +60,22 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
   `trusted-prevent-dom-bypass`, the `json-edit` family (`json-edit`, `json-edit-fetch-response`,
   `json-edit-xhr-response`, `jsonl-edit-*`, `json-edit-*-request` and their `trusted-` twins, with uBO's documented
   JSONPath-like syntax: `..key`, `.*`, `[?.a=="b"]` / `[?@.a>1]` filters, `^=` `$=` `*=` `=/regex/`, `=value`,
-  `+={...}`, `repl()`, `;` sub-queries with quantifiers) and `edit-inbound/outbound-object` - 59 in all, running in the
-  page at document start on the sites the lists name.
+  `+={...}`, `repl()`, `;` sub-queries with quantifiers) and `edit-inbound/outbound-object`; new in 1.8:
+  `trusted-replace-outbound-text`, `trusted-suppress-native-method`, `trusted-create-html`, `trusted-override-element-method`,
+  `xml-prune` and `mpegdash-prune` (ads taken out of VAST / VMAP / DASH video manifests, CSS or `xpath(...)` selectors),
+  `m3u-prune` (ad segments taken out of HLS playlists), `nobab`, `refresh-defuser`, `popads-dummy` / `popads.net`,
+  `prevent-innerHTML`, `prevent-canvas`, `prevent-dialog`, `prevent-navigation`, `prevent-clipboard-write` (the "paste this
+  into Run" scams), `spoof-css`, `disable-newtab-links`, `set-cookie-reload` / `trusted-set-cookie-reload`, `fingerprint2` and
+  `edit-object-on-setter` - 82 in all, running in the page at document start on the sites the lists name. Only 32 of the
+  lists' 17,000 scriptlet filters are left unused (1.7: 224).
+- **Lighter page fixes (new in 1.8):** each frame loads only its own site's fixes. Up to 1.7 every frame of a `.com` site got
+  the whole `.com` bundle (0.7 MB, plus the shared ones - about 970 KB of Shield scripts per frame). Now the scriptlets'
+  code is one 67 KB file, a small loader per bundle checks the frame's site against a compact index (a Bloom filter), and
+  only a frame whose site has fixes reads its own few-KB shard. Measured in CI against 1.7 (same machine, taking turns):
+  Shield's scripts per frame **971 KB -> 129 KB** on a heavy `.com` page with 6 frames (no shard read there), 140 KB + 19 KB
+  of shard on YouTube, 97 KB + 5 KB on Twitch; JS memory of that page 5.9 -> 5.1 MB; load time and main-thread script time
+  the same as 1.7 (605 / 606 ms, 29.6 / 29.7 ms). Blocking is unchanged: the same blocked requests and hidden elements on
+  YouTube, Twitch and The Guardian as 1.7.
 - **Blocking: Basic / Optimal / Complete,** like uBO Lite. *Basic* blocks requests only and runs nothing in pages.
   *Optimal* (the default) adds ad-box hiding and the page fixes on the sites Shield may access. *Complete* adds strict
   blocking of pop-up and pop-under ad sites.
@@ -132,7 +147,8 @@ popup. Hallow Hub and Hallow Remote read what it writes.
   ```
 
   - `version`: the bridge's version; `updated`: when the file was last written (UTC, ISO 8601).
-  - `browsers[]`: `name` (Chrome, Edge, Brave, Opera, Vivaldi, Chromium or Firefox), `profile` (`Default` for the
+  - `browsers[]`: `name` (Chrome, Edge, Brave, Opera, Vivaldi, Chromium, Firefox or Hallow Browser - its built-in Shield is
+    reported by the browser itself, in this same format; since 1.8 the bridge keeps that name when another browser reports), `profile` (`Default` for the
     first profile seen in that browser, then `Profile 2`, ...), Shield's `version` and `level` (`basic`,
     `optimal` or `complete`), the three counts (numbers, or `null` when that profile's blocked counts are off), when
     that browser last reported (`updated`), the browser's local date of the counts (`day`) and the random profile
@@ -150,14 +166,15 @@ popup. Hallow Hub and Hallow Remote read what it writes.
   `$redirect-rule` for broad patterns (311 skipped), no `$replace`/`$urlskip`/`$header`/`$cname`, no HTML filtering
   (`##^`), no regex `$removeparam`, no entity domains (`site.*`) in network filters (about 340 skipped). Cosmetic and
   scriptlet filters *do* support entities.
-- **About 224 scriptlet filters are still skipped** (1.4: 512, 1.2: 1,364) - the ones using scriptlets Shield doesn't
-  implement yet: the 30 `trusted-click-element` filters outside the cookie lists (not used on purpose),
-  `trusted-replace-outbound-text` (22), `nobab` (21), `trusted-suppress-native-method` (20), `trusted-create-html` (20),
-  `xml-prune` (18), `refresh-defuser` (12), .... The JSONPath edits support uBO's documented syntax except `=call()`,
-  slices and `||` / `&&` in filters (a filter using those does nothing). A handful are YouTube quick fixes; the main
-  YouTube filters (initial data, player API) all run.
+- **32 scriptlet filters are still skipped** (1.7: 224, 1.4: 512, 1.2: 1,364): the 30 `trusted-click-element` filters
+  outside the cookie lists (not used on purpose), `multiup` and `proxy-apply-config` (one site each). The JSONPath edits
+  support uBO's documented syntax except `=call()`, slices and `||` / `&&` in filters (a filter using those does nothing).
+  The 1.8 scriptlets follow uBO's documentation; `xml-prune` / `m3u-prune` edit manifests the page reads as text (fetch,
+  or XHR as text / JSON), not ones read as binary (`arraybuffer`). Every YouTube and Twitch scriptlet filter in the lists
+  runs (none of the 1.7 skips were YouTube or Twitch filters; Twitch's own ad handling is Hallow Browser's).
 - **YouTube changes often.** The YouTube filters are uBO's; Shield is tested against a local page shaped like
-  YouTube's (initial player data + player API), not against youtube.com itself, and gets uBO's fixes only when a new
+  YouTube's (initial player data + player API), and since 1.8 CI also opens youtube.com, twitch.tv and news sites
+  (no sign-in, a datacenter address - YouTube asks it to sign in, so no video ad is served there to check), and gets uBO's fixes only when a new
   Shield version is built (weekly) - full uBO updates its lists more often.
 - **Rule room:** with the default lists (ads, privacy, cookie banners) Shield uses about 22,300 rules, inside
   the 30,000 Chrome guarantees every extension (host filters are merged into shared rules, as uBO Lite does). With
@@ -186,9 +203,14 @@ popup. Hallow Hub and Hallow Remote read what it writes.
   about 100 ms. Shield's content script reports the class and id names a page uses when it has been parsed (and as it
   changes), and only the matching rules are added. A box hidden only by such a generic rule can show for a moment while
   the page loads; site-specific hiding still applies from the start.
-- **Page fixes are bundled per top-level domain (1.5)** (`.com`, `.de`, ...; the small ones share a bundle), each
-  registered with one pattern instead of one per site: 1.4's 36,000 site patterns were checked by the browser for every
-  frame. The bundle looks the page's site up itself, so a `.com` page loads the `.com` bundle (about 0.7 MB).
+- **Page fixes, split by site (1.8):** the scriptlets' code (`rules/js/core.js`, 67 KB, the page's world) is in every frame
+  where page fixes run; per bundle (`.com`, `.de`, ..., the small ones together, `name.*` entities) a small loader in
+  Shield's own world checks the frame's site, its parent domains and `name.*` against a Bloom filter (about 0.05 % false
+  positives per name) and reads only that site's shard (`rules/sl/`, a few KB) from the extension - synchronously, so the
+  fixes still run before the page's own scripts - and hands the filters to the code with a DOM event. A frame on a site
+  with fixes pays that small read (about 1-2 ms); one without pays nothing. The shard files are listed as web-accessible
+  (like the redirect stand-ins), so a page could read the lists' filters - they are public anyway. 1.5 / 1.7 bundled per
+  top-level domain instead (the `.com` bundle, 0.7 MB, in every `.com` frame).
 - **Pop-ups:** the browser can't tell a pop-up from any other new tab, so `$popup` filters only become rules for whole
   ad hosts opened from another site, and only at *Complete*.
 - **Firefox:** the Firefox package is built and linted in CI, but the end-to-end tests run in Chromium only.

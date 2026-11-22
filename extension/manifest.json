@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Hallow Shield",
   "short_name": "Shield",
-  "version": "1.7",
+  "version": "1.8",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0tUs07rXhexMlFbtG6Ez5T7lsBhDH0Baaw5nWV4Yf5i6unctOLvY0AOIR5Or25f/n655VUiNWQNWrm0HvNeq6wbLR3V4tAV1vyZwenhd4IXRi8eGtvcX/dIueu27pThlRYQEo2DSmxMaj10oixMl4HJ+Ezuwyyk9XzVavmYuHTSRy9g7lR3x1TP3Nk+vGOptF78Yv6OyaCENqz/2sf0adUOjBX41nw0g+CUjYsG8QSnLkckjww/TMjZypaknyZIP5P/sQGGFY5lJ6lYzO4HLyYarjWd6pGi66IYNXHFPw4Q7z5/ssLnI1ceHMetncAhSoW7PE+mFhjpjcRIi1N4xnwIDAQAB",
   "description": "Blocks ads, trackers and YouTube ads, and answers cookie banners with Reject - fast and private: the browser blocks them itself, and nothing you browse ever leaves your PC.",
   "icons": {
@@ -62,7 +62,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "web/*"
+        "web/*",
+        "rules/sl/*"
       ],
       "matches": [
         "<all_urls>"

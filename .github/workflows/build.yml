@@ -5,6 +5,9 @@
 # check every regex, checks the real rules load, block real ad servers and fix a fake YouTube page, measures what
 # Shield costs a heavy page (load time and content-script time, with the real rules; fails over budget), packs the
 # zips, and lints the Firefox package.
+# 1.8: the previous release (from its GitHub release, sha256-checked) against this build: bytes of Shield's scripts per frame,
+# load / script time and memory on a heavy page, and blocked requests / hidden elements on real sites (YouTube, Twitch, news).
+# Every test step has a 5-minute timeout.
 # 1.6: a Windows job builds the Hallow family bridge (bridge/HallowShieldBridge.exe, .NET Framework csc), runs its unit
 # tests and the bridge end-to-end test with the real exe; the Linux job runs the same e2e against a stand-in host and
 # packs the Windows-built exe into both zips.
@@ -34,6 +37,7 @@ jobs:
       - run: npm install
       - run: npx playwright install chromium
       - name: Bridge end-to-end (the switch, a native message to the real exe, status.json with counts and no URLs)
+        timeout-minutes: 5
         run: npm run rules:sample && npm run e2e:bridge
       - uses: actions/upload-artifact@v4
         with:
@@ -51,21 +55,46 @@ jobs:
       - run: npm install
       - run: npx playwright install --with-deps chromium
       - name: Converter and scriptlet tests
+        timeout-minutes: 5
         run: npm test
       - name: The extension in Chromium (sample lists)
+        timeout-minutes: 5
         run: npm run rules:sample && npm run e2e
       - name: The Hallow family bridge in Chromium (stand-in host)
+        timeout-minutes: 5
         run: npm run e2e:bridge
       - name: Rules from the newest lists
         run: npm run rules
       - name: Chromium checks every regex rule
+        timeout-minutes: 5
         run: npm run regex
       - name: Explain doubleclick gpt.js
         run: node tools/explain.mjs http://securepubads.g.doubleclick.net/tag/js/gpt.js http://news.example.org/page script
       - name: Chromium loads the real rules, blocks real ad servers, real YouTube filters on a fake page
+        timeout-minutes: 5
         run: npm run smoke
+      # 1.8: the previous release, from Shield's own GitHub release (sha256 pinned), to compare the split page fixes with
+      - name: The previous release (1.7) from Shield's GitHub release, sha256-checked
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREV: '1.7'
+          PREV_SHA: 8d9cf2f4f57dca0bed93e35d5a314662b1d5dde2689faeecf3422bba026005ba
+        run: |
+          mkdir -p /tmp/prev && gh release download "v$PREV" -R "$GITHUB_REPOSITORY" -p "hallow-shield-chrome-$PREV.zip" -D /tmp/prev
+          echo "$PREV_SHA  /tmp/prev/hallow-shield-chrome-$PREV.zip" | sha256sum -c -
+          mkdir -p /tmp/prev/x && unzip -q /tmp/prev/hallow-shield-chrome-$PREV.zip -d /tmp/prev/x
+      - name: Previous release vs this build - heavy page (bytes per frame, load, script time, memory)
+        timeout-minutes: 5
+        run: node test/compare.mjs /tmp/prev/x --no-real
       - name: Performance budget (heavy page with and without Shield, real rules)
+        timeout-minutes: 5
         run: npm run perf
+      - name: Previous release vs this build - real sites (YouTube, Twitch, news; headless, throw-away profiles)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        continue-on-error: true
+        run: CMP_REAL_RUNS=1 node test/compare.mjs /tmp/prev/x --only-real
       - uses: actions/download-artifact@v4
         with:
           name: bridge-exe
@@ -99,5 +128,6 @@ jobs:
           path: |
             /tmp/shield-*.png
             /tmp/shield-perf.json
+            /tmp/shield-compare.json
           if-no-files-found: ignore
           retention-days: 7

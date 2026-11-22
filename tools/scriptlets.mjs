@@ -917,6 +917,351 @@ function trustedPreventDomBypass(methodPath, targetProp) {
   }));
 }
 
+// ---------- 1.8 ----------
+// Written from uBO's documentation of each scriptlet (names and arguments as the lists use them); no uBO code.
+
+// trusted-replace-outbound-text: what a function returns (a text) is changed - "condition" (the text must match) and
+// "encoding, base64" (the text is decoded first and encoded again after) as extra arguments
+function trustedReplaceOutboundText(chain, pattern, replacement, ...rest) {
+  if (!chain || pattern === undefined || pattern === '') return;
+  const extra = shieldExtra(rest), rep = String(replacement === undefined ? '' : replacement);
+  const m = /^\/(.+)\/([dgimsuy]*)$/s.exec(String(pattern));
+  let re; try { re = m ? new RegExp(m[1], m[2]) : new RegExp(String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')); } catch (e) { return; }
+  const cond = extra.condition !== undefined && extra.condition !== '' ? shieldNeedle(extra.condition) : null;
+  const b64 = extra.encoding === 'base64', A = window.atob, B = window.btoa;
+  shieldWrapFn(chain, fn => new Proxy(fn, {
+    apply(t, self, args) {
+      const out = Reflect.apply(t, self, args);
+      if (typeof out !== 'string') return out;
+      try {
+        const text = b64 ? Reflect.apply(A, window, [out]) : out;
+        if (cond && !cond(text)) return out;
+        re.lastIndex = 0;
+        const next = text.replace(re, rep);
+        return next === text ? out : b64 ? Reflect.apply(B, window, [next]) : next;
+      } catch (e) { return out; }
+    },
+  }));
+}
+
+// one item of a call's signature ("a|b|c", one per argument): "window" / "document" / true / false / null / undefined /
+// a number are that value; {"key":"value"} an object with those properties; "/re/" (quoted or not) a pattern, any other
+// text a part of the argument as text
+function shieldSigSplit(sig) {
+  const out = []; let cur = '', q = null, re = false;
+  for (let i = 0; i < sig.length; i++) {
+    const c = sig[i];
+    if (q) { cur += c; if (c === '\\') { cur += sig[++i] || ''; continue; } if (c === q) q = null; continue; }
+    if (re) { cur += c; if (c === '\\') { cur += sig[++i] || ''; continue; } if (c === '/') re = false; continue; }
+    if (c === '"' && cur.trim() === '') { q = c; cur += c; continue; }
+    if (c === '/' && cur.trim() === '') { re = true; cur += c; continue; }
+    if (c === '|') { out.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+function shieldSigItem(raw) {
+  const s = String(raw).trim();
+  if (s === '') return () => true;
+  const fixed = { window: window, document: typeof document === 'undefined' ? {} : document, true: true, false: false, null: null, undefined: undefined };
+  if (Object.prototype.hasOwnProperty.call(fixed, s)) { const v = fixed[s]; return a => a === v; }
+  let v = s;
+  if (/^["{[\d-]/.test(s)) { try { v = JSON.parse(s); } catch (e) { v = s; } }
+  if (typeof v === 'number') return a => a === v || String(a) === String(v);
+  if (v !== null && typeof v === 'object') {
+    const keys = Object.keys(v).map(k => [k, shieldSigItem(typeof v[k] === 'string' ? JSON.stringify(v[k]) : JSON.stringify(v[k]))]);
+    return a => { if (a === null || (typeof a !== 'object' && typeof a !== 'function')) return false; try { return keys.every(([k, t]) => t(a[k])); } catch (e) { return false; } };
+  }
+  const re = shieldRe(String(v));
+  return a => { let t; try { t = String(a); } catch (e) { return false; } return re.test(t); };
+}
+// a stack-trace condition: a pattern, or "inlineScript" (called from a script inside the page itself)
+function shieldStackTest(needle) {
+  if (needle === undefined || needle === '') return null;
+  if (needle === 'inlineScript') {
+    return () => { const doc = location.href.split('#')[0]; return (new Error().stack || '').split('\n').slice(2).some(l => l.includes(doc + ':')); };
+  }
+  const t = shieldNeedle(needle);
+  return () => t(new Error().stack || '');
+}
+// trusted-suppress-native-method: a call of a built-in function with these arguments doesn't happen - "abort" (the
+// default) throws, "prevent" returns undefined; the fourth argument is a stack-trace condition
+function trustedSuppressNativeMethod(chain, signature, how, stack) {
+  if (!chain) return;
+  const items = shieldSigSplit(String(signature === undefined ? '' : signature)).map(shieldSigItem);
+  const abort = how !== 'prevent', st = shieldStackTest(stack);
+  const hit = args => { try { return items.every((m, i) => m(args[i])) && (!st || st()); } catch (e) { return false; } };
+  shieldWrapFn(chain, fn => new Proxy(fn, {
+    apply(t, self, args) { if (!hit(args)) return Reflect.apply(t, self, args); if (abort) throw new ReferenceError('Shield'); return undefined; },
+    construct(t, args, nt) { if (!hit(args)) return Reflect.construct(t, args, nt); if (abort) throw new ReferenceError('Shield'); return {}; },
+  }));
+}
+
+// HTML text -> nodes of this document (through a Trusted Types policy where the page requires one)
+function shieldMarkup(html) {
+  let s = String(html);
+  try { if (window.trustedTypes && trustedTypes.createPolicy) s = trustedTypes.createPolicy('hallow-shield-' + Math.random().toString(36).slice(2, 8), { createHTML: x => x }).createHTML(s); } catch (e) { }
+  const doc = new DOMParser().parseFromString(s, 'text/html'), frag = document.createDocumentFragment();
+  for (const n of [...doc.head.childNodes, ...doc.body.childNodes]) frag.appendChild(document.adoptNode(n));
+  return frag;
+}
+// trusted-create-html: elements added to the first element the selector names (when it's there), removed again after
+// the given milliseconds
+function trustedCreateHtml(parentSelector, html, duration) {
+  if (!parentSelector || !html) return;
+  const ms = parseInt(duration, 10);
+  let done = false, obs = null;
+  const insert = () => {
+    if (done) return true;
+    let parent; try { parent = document.querySelector(parentSelector); } catch (e) { done = true; return true; }
+    if (!parent) return false;
+    done = true;
+    let frag; try { frag = shieldMarkup(html); } catch (e) { return true; }
+    const added = [...frag.childNodes];
+    try { parent.append(frag); } catch (e) { return true; }
+    if (ms > 0) setTimeout(() => { for (const n of added) { try { n.remove(); } catch (e) { } } }, ms);
+    return true;
+  };
+  const start = () => {
+    if (insert()) return;
+    obs = new MutationObserver(() => { if (insert()) obs.disconnect(); });
+    obs.observe(document, { childList: true, subtree: true });
+    window.addEventListener('load', () => setTimeout(() => obs.disconnect(), 10000), { once: true });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
+}
+
+// XML (VAST / VMAP / DASH manifests) with the nodes a CSS selector or xpath(...) names taken out (attributes too);
+// "check": a selector the document must have, else it's left alone
+function shieldXmlPruner(selector, check) {
+  if (!selector) return null;
+  const xp = /^xpath\((.+)\)$/s.exec(String(selector).trim());
+  return text => {
+    if (!/^\s*</.test(text)) return;
+    let doc; try { doc = new DOMParser().parseFromString(text, 'text/xml'); } catch (e) { return; }
+    if (!doc || !doc.documentElement || doc.getElementsByTagName('parsererror').length) return;
+    try { if (check && !doc.querySelector(check)) return; } catch (e) { return; }
+    const hits = [];
+    try {
+      if (xp) { const r = doc.evaluate(xp[1], doc, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null); for (let i = 0; i < r.snapshotLength; i++) hits.push(r.snapshotItem(i)); }
+      else hits.push(...doc.querySelectorAll(selector));
+    } catch (e) { return; }
+    if (!hits.length) return;
+    for (const n of hits) { try { if (n.nodeType === 2) { if (n.ownerElement) n.ownerElement.removeAttributeNode(n); } else if (n.parentNode) n.parentNode.removeChild(n); } catch (e) { } }
+    return new XMLSerializer().serializeToString(doc);
+  };
+}
+function xmlPrune(selector, check, urlPattern) {
+  const prune = shieldXmlPruner(selector, check);
+  if (!prune) return;
+  const url = shieldNeedle(urlPattern || ''), match = d => url(d.url);
+  shieldFetchHook(match, prune);
+  shieldXhrHook(match, prune);
+}
+function mpegdashPrune(selector, urlPattern) { xmlPrune(selector, '', urlPattern); }
+
+// HLS playlists (.m3u8) without the ad segments: a /re/ with the m or s flag works on the whole text; otherwise each
+// line that matches goes, with its segment (#EXTINF and the address that belong together)
+function shieldM3uPruner(pattern) {
+  if (!pattern) return null;
+  const m = /^\/(.+)\/([dgimsuy]*)$/s.exec(String(pattern));
+  let re = null; try { if (m) re = new RegExp(m[1], m[2]); } catch (e) { return null; }
+  const lit = re ? null : String(pattern);
+  const hit = line => { if (!re) return line.includes(lit); re.lastIndex = 0; return re.test(line); };
+  return text => {
+    if (!/^\s*#EXTM3U/.test(text)) return;
+    if (re && /[ms]/.test(re.flags)) { const g = re.global ? re : new RegExp(re.source, re.flags + 'g'); g.lastIndex = 0; const out = text.replace(g, ''); return out === text ? undefined : out; }
+    const lines = text.split(/\r?\n/), drop = lines.map(() => false);
+    for (let i = 0; i < lines.length; i++) {
+      if (drop[i] || !hit(lines[i])) continue;
+      drop[i] = true;
+      if (lines[i].startsWith('#EXTINF')) { for (let j = i + 1; j < lines.length; j++) { if (!lines[j]) continue; drop[j] = true; if (!lines[j].startsWith('#')) break; } }
+      else if (!lines[i].startsWith('#')) {
+        for (let j = i - 1; j >= 0 && lines[j].startsWith('#') && !lines[j].startsWith('#EXTM3U'); j--) { if (lines[j].startsWith('#EXTINF')) { for (let k = j; k < i; k++) drop[k] = true; break; } }
+      }
+    }
+    if (!drop.some(Boolean)) return;
+    return lines.filter((l, i) => !drop[i]).join('\n');
+  };
+}
+function m3uPrune(pattern, urlPattern) {
+  const prune = shieldM3uPruner(pattern);
+  if (!prune) return;
+  const url = shieldNeedle(urlPattern || ''), match = d => url(d.url);
+  shieldFetchHook(match, prune);
+  shieldXhrHook(match, prune);
+}
+
+// refresh-defuser: a <meta http-equiv="refresh"> doesn't take the page away (the page stops loading just before the
+// refresh would happen; the browser starts the refresh's clock when the page has loaded)
+function refreshDefuser(delay) {
+  const defuse = () => {
+    let meta = null; try { meta = document.querySelector('meta[http-equiv="refresh" i][content]'); } catch (e) { }
+    if (!meta) return;
+    const s = delay !== undefined && delay !== '' ? delay : meta.getAttribute('content');
+    const ms = Math.max(parseFloat(s) || 0, 0) * 1000;
+    const stop = () => { try { window.stop(); } catch (e) { } };
+    if (ms <= 200) stop(); else setTimeout(stop, ms - 200);
+  };
+  if (document.readyState === 'complete') defuse(); else window.addEventListener('load', defuse, { capture: true, once: true });
+}
+
+// nobab: the "BlockAdBlock" family of anti-adblock scripts (run through eval or a timer) never runs
+function nobab() {
+  const looksLikeBab = code => {
+    const s = String(code);
+    if (/blockadblock|babasbm|['"]babn['"]/i.test(s)) return true;
+    return ['String.fromCharCode', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', 'DOMContentLoaded', 'doScroll', 'sessionStorage', 'clientWidth'].every(t => s.includes(t));
+  };
+  window.eval = new Proxy(window.eval, { apply(t, self, args) { if (typeof args[0] === 'string' && looksLikeBab(args[0])) return undefined; return Reflect.apply(t, self, args); } });
+  window.setTimeout = new Proxy(window.setTimeout, { apply(t, self, args) { if (looksLikeBab(shieldFnText(args[0]))) return 0; return Reflect.apply(t, self, args); } });
+}
+
+// popads: popads-dummy gives the pop-under script dummies to find; popads.net makes it fail on its first look
+function popadsDummy() {
+  for (const k of ['PopAds', 'popns']) { try { delete window[k]; Object.defineProperty(window, k, { value: {}, writable: false, configurable: false }); } catch (e) { } }
+}
+function popadsNet() {
+  const err = new ReferenceError('Shield: popads');
+  for (const k of ['PopAds', 'popns']) { try { Object.defineProperty(window, k, { configurable: false, get() { throw err; }, set() { throw err; } }); } catch (e) { } }
+  window.addEventListener('error', e => { if (e.error === err) e.preventDefault(); }, true);
+}
+
+// prevent-innerHTML: setting innerHTML on an element the selector names, to a text that matches, doesn't happen
+function preventInnerHTML(selector, pattern) {
+  const d = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  if (!d || !d.set) return;
+  const test = shieldNeedle(pattern || '');
+  Object.defineProperty(Element.prototype, 'innerHTML', {
+    configurable: true, enumerable: d.enumerable, get: d.get,
+    set: new Proxy(d.set, { apply(t, el, args) { let hit = false; try { hit = (!selector || el.matches(selector)) && test(String(args[0])); } catch (e) { } if (hit) return; return Reflect.apply(t, el, args); } }),
+  });
+}
+// prevent-canvas: canvas.getContext(type) gives null for these types ("2d", "webgl", ...)
+function preventCanvas(contextType) {
+  const test = shieldNeedle(contextType || ''), P = window.HTMLCanvasElement && HTMLCanvasElement.prototype;
+  if (!P) return;
+  P.getContext = new Proxy(P.getContext, { apply(t, self, args) { if (test(String(args[0]))) return null; return Reflect.apply(t, self, args); } });
+}
+// spoof-css: elements the selector names report these CSS values (getComputedStyle, and the box size / place for
+// width, height, top, left) - for pages that check whether their bait was hidden
+function spoofCss(selector, ...pairs) {
+  if (!selector || pairs.length < 2) return;
+  const camel = k => String(k).trim().replace(/-([a-z])/g, (x, c) => c.toUpperCase()), want = {};
+  for (let i = 0; i + 1 < pairs.length; i += 2) want[camel(pairs[i])] = String(pairs[i + 1]);
+  const has = k => typeof k === 'string' && Object.prototype.hasOwnProperty.call(want, camel(k));
+  const hit = el => { try { return el instanceof Element && el.matches(selector); } catch (e) { return false; } };
+  window.getComputedStyle = new Proxy(window.getComputedStyle, {
+    apply(t, self, args) {
+      const st = Reflect.apply(t, self, args);
+      if (!hit(args[0])) return st;
+      return new Proxy(st, {
+        get(o, k) {
+          if (has(k)) return want[camel(k)];
+          if (k === 'getPropertyValue') return name => has(name) ? want[camel(name)] : o.getPropertyValue(name);
+          const v = Reflect.get(o, k, o);
+          return typeof v === 'function' ? v.bind(o) : v;
+        },
+      });
+    },
+  });
+  const num = k => want[k] !== undefined && !isNaN(parseFloat(want[k])) ? parseFloat(want[k]) : null;
+  if (['width', 'height', 'top', 'left'].some(k => num(k) !== null)) {
+    Element.prototype.getBoundingClientRect = new Proxy(Element.prototype.getBoundingClientRect, {
+      apply(t, self, args) {
+        const r = Reflect.apply(t, self, args);
+        if (!hit(self)) return r;
+        const v = (k, d) => num(k) === null ? d : num(k);
+        return new DOMRect(v('left', r.x), v('top', r.y), v('width', r.width), v('height', r.height));
+      },
+    });
+  }
+}
+// trusted-override-element-method: a method called on an element the selector names does nothing (returns the
+// given value, or throws with "throw")
+function trustedOverrideElementMethod(chain, selector, disposition) {
+  if (!chain || !selector) return;
+  const d = String(disposition === undefined ? '' : disposition), value = d === '' || d === 'throw' ? undefined : shieldConst(d, true)[1];
+  shieldWrapFn(chain, fn => new Proxy(fn, {
+    apply(t, self, args) {
+      let hit = false; try { hit = self instanceof Element && self.matches(selector); } catch (e) { }
+      if (!hit) return Reflect.apply(t, self, args);
+      if (d === 'throw') throw new ReferenceError('Shield');
+      return value;
+    },
+  }));
+}
+// disable-newtab-links: links that would open a new tab don't
+function disableNewtabLinks() {
+  document.addEventListener('click', e => {
+    let el = e.target;
+    while (el && !(el instanceof HTMLAnchorElement)) el = el.parentElement;
+    if (!el) return;
+    const t = (el.getAttribute('target') || '').toLowerCase();
+    if (!t || t === '_self' || t === '_parent' || t === '_top') return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+}
+// set-cookie-reload / trusted-set-cookie-reload: the cookie is set, and the page reloaded once if that changed it
+function shieldCookieNow(name) {
+  const p = document.cookie.split(/;\s*/).find(c => c.split('=')[0] === encodeURIComponent(name));
+  return p === undefined ? null : p.slice(p.indexOf('=') + 1);
+}
+function setCookieReload(name, value, path) {
+  const before = shieldCookieNow(name); setCookie(name, value, path);
+  const after = shieldCookieNow(name); if (after !== null && after !== before) location.reload();
+}
+function trustedSetCookieReload(name, value, offset, path) {
+  const before = shieldCookieNow(name); trustedSetCookie(name, value, offset, path);
+  const after = shieldCookieNow(name); if (after !== null && after !== before) location.reload();
+}
+// prevent-dialog: <dialog> elements the selector names aren't opened (and are closed when they are)
+function preventDialog(selector) {
+  const P = window.HTMLDialogElement && HTMLDialogElement.prototype;
+  if (!P) return;
+  const ok = el => { try { return !selector || el.matches(selector); } catch (e) { return false; } };
+  for (const m of ['show', 'showModal']) if (P[m]) P[m] = new Proxy(P[m], { apply(t, self, args) { if (ok(self)) return undefined; return Reflect.apply(t, self, args); } });
+  shieldWhen('stay', () => { for (const d of document.querySelectorAll('dialog[open]')) if (ok(d)) { try { d.close(); } catch (e) { } } }, ['open']);
+}
+// prevent-navigation: the page can't send itself to addresses that match (the Navigation API)
+function preventNavigation(pattern) {
+  if (!window.navigation || !pattern) return;
+  const test = pattern === 'location.href' ? (u => u === location.href) : shieldNeedle(pattern);
+  window.navigation.addEventListener('navigate', e => { try { if (e.cancelable && test(e.destination.url)) e.preventDefault(); } catch (er) { } });
+}
+// prevent-clipboard-write: the page can't put text that matches on the clipboard (the "paste this into Run" scams)
+function preventClipboardWrite(pattern) {
+  const test = shieldNeedle(pattern || '');
+  const C = window.Clipboard && Clipboard.prototype, D = window.DataTransfer && DataTransfer.prototype;
+  if (C && C.writeText) C.writeText = new Proxy(C.writeText, { apply(t, self, args) { if (test(String(args[0]))) return Promise.resolve(); return Reflect.apply(t, self, args); } });
+  if (D && D.setData) D.setData = new Proxy(D.setData, { apply(t, self, args) { if (test(String(args[1]))) return undefined; return Reflect.apply(t, self, args); } });
+}
+// fingerprint2: a do-nothing stand-in for the FingerprintJS 2 library (pages that wait for it still go on)
+function fingerprint2() {
+  const id = Array.from({ length: 32 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+  function Fingerprint2() { }
+  const later = cb => { if (typeof cb === 'function') setTimeout(() => cb(id, []), 1); };
+  Fingerprint2.get = (o, cb) => later(typeof o === 'function' ? (c => o([], c)) : cb && (() => cb([])));
+  Fingerprint2.getPromise = () => Promise.resolve([]);
+  Fingerprint2.getV18 = (o, cb) => later(typeof o === 'function' ? o : cb);
+  Fingerprint2.x64hash128 = () => id;
+  Fingerprint2.prototype.get = function (cb) { later(cb); };
+  try { Object.defineProperty(window, 'Fingerprint2', { value: Fingerprint2, writable: false, configurable: true }); } catch (e) { }
+}
+// edit-object-on-setter: an object the page stores in a property is edited (uBO's JSONPath-like syntax) as it's stored
+function shieldEditOnSetter(chain, query, trusted) {
+  const edit = shieldJsonEdit(query, trusted);
+  if (!chain || !edit) return;
+  shieldTrap(chain, (owner, prop) => {
+    let v; try { v = owner[prop]; } catch (e) { }
+    if (v && typeof v === 'object') { try { edit(v); } catch (e) { } }
+    return { get() { return v; }, set(nv) { if (nv && typeof nv === 'object') { try { edit(nv); } catch (e) { } } v = nv; } };
+  });
+}
+function editObjectOnSetter(chain, query) { shieldEditOnSetter(chain, query, false); }
+function trustedEditObjectOnSetter(chain, query) { shieldEditOnSetter(chain, query, true); }
+
 // canonical name -> implementation
 export const SCRIPTLETS = {
   'set-constant': setConstant, 'trusted-set-constant': trustedSetConstant,
@@ -945,6 +1290,15 @@ export const SCRIPTLETS = {
   'edit-inbound-object': editInboundObject, 'trusted-edit-inbound-object': trustedEditInboundObject,
   'edit-outbound-object': editOutboundObject, 'trusted-edit-outbound-object': trustedEditOutboundObject,
   'trusted-replace-argument': trustedReplaceArgument, 'href-sanitizer': hrefSanitizer, 'trusted-prevent-dom-bypass': trustedPreventDomBypass,
+  // 1.8
+  'trusted-replace-outbound-text': trustedReplaceOutboundText, 'trusted-suppress-native-method': trustedSuppressNativeMethod,
+  'trusted-create-html': trustedCreateHtml, 'xml-prune': xmlPrune, 'mpegdash-prune': mpegdashPrune, 'm3u-prune': m3uPrune,
+  'refresh-defuser': refreshDefuser, nobab, 'popads-dummy': popadsDummy, 'popads.net': popadsNet,
+  'prevent-innerHTML': preventInnerHTML, 'prevent-canvas': preventCanvas, 'spoof-css': spoofCss,
+  'trusted-override-element-method': trustedOverrideElementMethod, 'disable-newtab-links': disableNewtabLinks,
+  'set-cookie-reload': setCookieReload, 'trusted-set-cookie-reload': trustedSetCookieReload,
+  'prevent-dialog': preventDialog, 'prevent-navigation': preventNavigation, 'prevent-clipboard-write': preventClipboardWrite,
+  fingerprint2, 'edit-object-on-setter': editObjectOnSetter, 'trusted-edit-object-on-setter': trustedEditObjectOnSetter,
 };
 const JSON_EDIT = [shieldJsonEdit, shieldEditArgs, shieldJsonText];
 const JSON_EDIT_EXTRA = Object.fromEntries(Object.keys(SCRIPTLETS).filter(n => /json-edit|jsonl-edit/.test(n)).map(n => [n, [...JSON_EDIT, /request/.test(n) ? shieldJsonEditRequest : /response/.test(n) ? shieldJsonEditResponse : shieldJsonEditParse]]));
@@ -953,10 +1307,15 @@ const OBJECT_EDIT_EXTRA = Object.fromEntries(Object.keys(SCRIPTLETS).filter(n =>
 export const EXTRA = { 'trusted-replace-fetch-response': [shieldReplacer], 'trusted-replace-xhr-response': [shieldReplacer],
   'adjust-setTimeout': [shieldAdjust], 'adjust-setInterval': [shieldAdjust], 'set-local-storage-item': [shieldStorage], 'set-session-storage-item': [shieldStorage],
   'remove-node-text': [shieldNodeText], 'trusted-replace-node-text': [shieldNodeText], 'set-attr': [shieldSetAttr], 'trusted-set-attr': [shieldSetAttr],
-  ...JSON_EDIT_EXTRA, ...OBJECT_EDIT_EXTRA, 'trusted-replace-argument': [shieldWrapFn], 'trusted-prevent-dom-bypass': [shieldWrapFn] };
+  ...JSON_EDIT_EXTRA, ...OBJECT_EDIT_EXTRA, 'trusted-replace-argument': [shieldWrapFn], 'trusted-prevent-dom-bypass': [shieldWrapFn],
+  // 1.8
+  'trusted-replace-outbound-text': [shieldWrapFn], 'trusted-suppress-native-method': [shieldWrapFn, shieldSigSplit, shieldSigItem, shieldStackTest],
+  'trusted-create-html': [shieldMarkup], 'xml-prune': [shieldXmlPruner], 'mpegdash-prune': [shieldXmlPruner, xmlPrune], 'm3u-prune': [shieldM3uPruner],
+  'trusted-override-element-method': [shieldWrapFn], 'set-cookie-reload': [shieldCookieNow, setCookie], 'trusted-set-cookie-reload': [shieldCookieNow, trustedSetCookie],
+  'edit-object-on-setter': [...JSON_EDIT, shieldEditOnSetter], 'trusted-edit-object-on-setter': [...JSON_EDIT, shieldEditOnSetter] };
 // for the unit tests
 export const JSON_EDIT_SOURCE = shieldJsonEdit;
-export const CONSTS = { 'set-cookie': `const SHIELD_SAFE_VALUES = ${JSON.stringify(SHIELD_SAFE_VALUES)};` };
+export const CONSTS = { 'set-cookie': `const SHIELD_SAFE_VALUES = ${JSON.stringify(SHIELD_SAFE_VALUES)};`, 'set-cookie-reload': `const SHIELD_SAFE_VALUES = ${JSON.stringify(SHIELD_SAFE_VALUES)};` };
 
 // the runner around a scriptlet: which arguments apply on this page (hostname, its parent domains, "name.*" entities)
 function shieldRun(main, ARGS, HOSTS, EXC) {
@@ -1019,4 +1378,98 @@ export function bundleSites(parts, title) {
     `(function () {\n'use strict';\n${consts}\n${helpers}\n${shieldSites.toString()}\n` +
     names.map(n => SCRIPTLETS[n].toString()).join('\n') +
     `\nshieldSites([${names.map(n => SCRIPTLETS[n].name).join(', ')}], ${JSON.stringify(K)}, ${JSON.stringify(JSON.stringify(table))});\n})();\n`;
+}
+
+// ---------- 1.8: page fixes split by site ----------
+// 1.5 put each top-level domain's fixes in one bundle (the .com one was 0.7 MB) that every frame under that domain
+// loaded in full. Now:
+//   rules/js/core.js         the scriptlets' code, once (MAIN world, every frame where page fixes are on)
+//   rules/js/<bundle>.js     a small loader per bundle (ISOLATED world) with a Bloom filter of the bundle's sites: a
+//                            frame whose site (or parent domain, or name.*) isn't in it does nothing more
+//   rules/sl/<bundle>-<n>.json   the sites' filters, in shards by site; a frame reads only its own site's shard(s)
+//                            (from the extension, synchronously, so the fixes still run before the page's scripts)
+// The loader hands the filters to the core with a DOM event (both worlds share the document); the core runs them.
+export const SL_RUN = 'hallowshield-sl-run', SL_READY = 'hallowshield-sl-ready';
+const BLOOM_K = 11, BLOOM_BITS = 16;   // about 0.05 % false positives per key: a frame checks up to ~5 keys in up to 4 bundles
+function shieldFnv(s, h) { for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+export const fnv = shieldFnv;
+export const bloomIndexes = (key, m) => { const a = shieldFnv(key, 2166136261), b = shieldFnv(key, 3735928559) | 1; return Array.from({ length: BLOOM_K }, (_, i) => ((a + Math.imul(i, b)) >>> 0) % m); };
+export const shardOf = (key, n) => shieldFnv(key, 2166136261) % n;
+
+// MAIN world: the code of every scriptlet named, and the receiver for the loaders' filters
+function shieldCore(FNS, RUN, READY) {
+  const onRun = e => {
+    let msg; try { msg = JSON.parse(String(e.detail)); } catch (er) { return; }
+    if (!msg || !Array.isArray(msg.c)) return;
+    e.preventDefault();
+    for (const call of msg.c) { const f = FNS[call[0]]; if (typeof f === 'function') { try { f(...call[1]); } catch (er) { } } }
+  };
+  document.addEventListener(RUN, onRun);
+  document.dispatchEvent(new CustomEvent(READY));
+  document.addEventListener('DOMContentLoaded', () => document.removeEventListener(RUN, onRun), { once: true });
+}
+export function coreBundle(names) {
+  names = [...new Set(names)].filter(n => SCRIPTLETS[n]).sort();
+  const fns = new Set([...HELPERS, ...names.flatMap(n => EXTRA[n] || []), ...names.map(n => SCRIPTLETS[n])]);
+  const consts = [...new Set(names.map(n => CONSTS[n]).filter(Boolean))].join('\n');
+  return `// Hallow Shield page fixes: the code (MAIN world) - generated by tools/build.mjs; Hallow Shield's own scriptlets.\n` +
+    `(function () {\n'use strict';\n${consts}\n${[...fns].map(f => f.toString()).join('\n')}\n${shieldCore.toString()}\n` +
+    `shieldCore({${names.map(n => JSON.stringify(n) + ': ' + SCRIPTLETS[n].name).join(', ')}}, ${JSON.stringify(SL_RUN)}, ${JSON.stringify(SL_READY)});\n})();\n`;
+}
+
+// ISOLATED world: is this frame's site in the bundle? Then read its shard(s) and hand the filters to the core.
+function shieldLoader(ID, N, M, BITS, RUN, READY) {
+  const ext = globalThis.browser || globalThis.chrome;
+  const p = location.hostname.toLowerCase().split('.'), keys = [];
+  for (let i = 0; i < p.length; i++) keys.push(p.slice(i).join('.'));
+  for (let i = 0; i < p.length - 1; i++) if (p.length - i - 1 <= 2) keys.push(p[i] + '.*');
+  const fnv = (s, h) => { for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  const bits = atob(BITS);
+  const has = k => { const a = fnv(k, 2166136261), b = fnv(k, 3735928559) | 1; for (let i = 0; i < 11; i++) { const x = ((a + Math.imul(i, b)) >>> 0) % M; if (!(bits.charCodeAt(x >> 3) & (1 << (x & 7)))) return false; } return true; };
+  const want = keys.filter(k => k && has(k));
+  if (!want.length) return;
+  const files = [...new Set(want.map(k => fnv(k, 2166136261) % N))];
+  const run = shards => {
+    let inc = null; const exc = [], table = {};
+    for (const s of shards) {
+      if (!s) continue;
+      for (const k of want) { const v = s.k[k]; if (!v) continue; inc = inc || new Set(); for (const id of v[0]) { inc.add(id); table[id] = s.t[id]; } for (const x of v[1]) exc.push(x); }
+    }
+    if (!inc || !inc.size) return;
+    for (const x of exc) { if (typeof x === 'number') inc.delete(x); else for (const id of [...inc]) if (table[id] && table[id][0] === x) inc.delete(id); }
+    const calls = [...inc].sort((a, c) => a - c).map(id => table[id]).filter(Boolean);
+    if (!calls.length) return;
+    const detail = JSON.stringify({ b: ID, c: calls });
+    const send = () => document.dispatchEvent(new CustomEvent(RUN, { detail, cancelable: true }));
+    if (send()) { const again = () => { document.removeEventListener(READY, again); send(); }; document.addEventListener(READY, again); }
+  };
+  const url = n => ext.runtime.getURL('rules/sl/' + ID + '-' + n + '.json');
+  let shards = null;
+  try {
+    shards = files.map(n => { const x = new XMLHttpRequest(); x.open('GET', url(n), false); x.send(); if (x.status && x.status !== 200) throw new Error(String(x.status)); return JSON.parse(x.responseText); });
+  } catch (e) { shards = null; }
+  if (shards) run(shards);
+  else Promise.all(files.map(n => fetch(url(n)).then(r => r.json()).catch(() => null))).then(run);   // late, but better than not at all
+}
+
+// parts = { canonical name: { args, hosts, exc } } (as for bundleSites) -> the loader and its shards
+export function siteBundle(id, parts, title, shardBytes = 6000) {
+  const names = Object.keys(parts), table = [], idOf = new Map(), keys = new Map();
+  names.forEach(n => parts[n].args.forEach((a, i) => { idOf.set(n + ' ' + i, table.length); table.push([n, a]); }));
+  const entry = k => { if (!keys.has(k)) keys.set(k, [[], []]); return keys.get(k); };
+  names.forEach(n => {
+    for (const [k, l] of Object.entries(parts[n].hosts)) for (const i of l) entry(k)[0].push(idOf.get(n + ' ' + i));
+    for (const [k, l] of Object.entries(parts[n].exc)) for (const i of l) entry(k)[1].push(i < 0 ? n : idOf.get(n + ' ' + i));
+  });
+  // shards of about shardBytes each
+  const size = [...keys].reduce((s, [k, v]) => s + k.length + JSON.stringify(v).length + v[0].reduce((t, i) => t + JSON.stringify(table[i]).length, 0), 0);
+  const n = Math.max(1, Math.min(512, Math.round(size / shardBytes)));
+  const shards = Array.from({ length: n }, () => ({ k: {}, t: {} }));
+  for (const [k, v] of keys) { const s = shards[shardOf(k, n)]; s.k[k] = v; for (const i of v[0]) s.t[i] = table[i]; }
+  // the Bloom filter (a false positive = a frame that reads a shard for nothing)
+  const m = Math.max(64, Math.ceil(keys.size * BLOOM_BITS / 8) * 8), bits = new Uint8Array(m / 8);
+  for (const k of keys.keys()) for (const x of bloomIndexes(k, m)) bits[x >> 3] |= 1 << (x & 7);
+  const loader = `// Hallow Shield page fixes for ${title} - the loader (ISOLATED world), generated by tools/build.mjs.\n` +
+    `(function () {\n'use strict';\n${shieldLoader.toString()}\nshieldLoader(${JSON.stringify(id)}, ${n}, ${m}, ${JSON.stringify(Buffer.from(bits).toString('base64'))}, ${JSON.stringify(SL_RUN)}, ${JSON.stringify(SL_READY)});\n})();\n`;
+  return { loader, shards: shards.map(s => JSON.stringify(s)), keys: keys.size, names };
 }

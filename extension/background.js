@@ -188,10 +188,13 @@ async function syncScripts() {
       if (c.specificGeneric !== 0) scripts.push({ ...base, id: 'shield-sg' + sfx, matches, excludeMatches: [...exclude, ...noHide, ...patternsFor(ehide)], css: [dirOf(g) + 'specific-generic.css'] });
     }
     // the bundles of a Strict-only group are registered on the Strict sites; each bundle checks the site itself
+    // 1.8: "core" (group "*", MAIN world) is the scriptlets' code, wherever any group's page fixes run; the bundles are small
+    // loaders (ISOLATED world) that read only their own site's filters (rules/sl/) and hand them to the core
     for (const b of await scriptlets()) {
-      const g = b.group || 'main';
-      if (global.includes(g)) scripts.push({ ...base, id: 'shield-sl-' + b.id, matches: b.matches, excludeMatches: exclude, js: [b.file], world: 'MAIN' });
-      else if (extra.includes(g)) scripts.push({ ...base, id: 'shield-sl-' + b.id, matches: strictPats, excludeMatches: exclude, js: [b.file], world: 'MAIN' });
+      const g = b.group || 'main', world = b.world || 'MAIN';
+      if (g === '*') scripts.push({ ...base, id: 'shield-sl-' + b.id, matches: global.length ? b.matches : strictPats, excludeMatches: exclude, js: [b.file], world });
+      else if (global.includes(g)) scripts.push({ ...base, id: 'shield-sl-' + b.id, matches: b.matches, excludeMatches: exclude, js: [b.file], world });
+      else if (extra.includes(g)) scripts.push({ ...base, id: 'shield-sl-' + b.id, matches: strictPats, excludeMatches: exclude, js: [b.file], world });
     }
   }
   // the cosmetic script (it gets procedural.js / clicker.js only when the site needs them): everywhere from Optimal up; at Basic only where

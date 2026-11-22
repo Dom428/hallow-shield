@@ -106,6 +106,20 @@ namespace HallowShieldBridge
             // forgotten after 30 days
             var old = Bridge.Merge(new List<Entry> { E("Brave", "old", 1, 1, 1, T0.AddDays(-31)) }, E("Chrome", "new", 1, 1, 1, T0), T0);
             Ok(old.Count == 1 && old[0].Id == "new", "merge: 31-day-old entry forgotten");
+            // 1.8: Hallow Browser's own entry (the browser writes it itself) keeps its name when another browser reports
+            var hb = Path.Combine(Path.GetTempPath(), "hsb-hb-" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                File.WriteAllText(hb, "{\"version\":\"1.7\",\"updated\":\"2026-11-21T11:59:00Z\",\"browsers\":[{\"name\":\"Hallow Browser\",\"profile\":\"Default\",\"version\":\"1.7\",\"level\":\"optimal\",\"blockedToday\":36,\"blockedWeek\":346,\"bannersToday\":0,\"updated\":\"2026-11-21T11:59:00Z\",\"day\":\"" + Day(T0) + "\",\"id\":\"923191748e460448\"}],\"blockedToday\":36,\"blockedWeek\":346,\"bannersToday\":0}");
+                var loaded = Bridge.Load(hb);
+                Eq(loaded.Count, 1, "hallow browser: loaded"); Eq(loaded[0].Name, "Hallow Browser", "hallow browser: name kept on load (was renamed Chrome before 1.8)");
+                var both = Bridge.Merge(loaded, E("Chrome", "ccc", 4, 40, 0, T0), T0);
+                Ok(both.Count == 2 && both.Any(x => x.Name == "Hallow Browser" && x.Id == "923191748e460448" && x.Profile == "Default") && both.Any(x => x.Name == "Chrome" && x.Profile == "Default"), "hallow browser: kept next to Chrome");
+                var j = Bridge.Render(both, T0);
+                Ok(j.Contains("\"name\":\"Hallow Browser\"") && j.Contains("],\"blockedToday\":40,"), "hallow browser: listed and summed " + j);
+                Eq(Bridge.Parse("{\"level\":\"optimal\",\"version\":\"1.8\",\"browser\":\"Hallow Browser\",\"profile\":\"ab\"}", T0).Name, "Hallow Browser", "hallow browser: a report naming it");
+            }
+            finally { File.Delete(hb); }
         }
 
         static void StaleAndToday()

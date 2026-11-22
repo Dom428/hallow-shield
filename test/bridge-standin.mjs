@@ -11,7 +11,7 @@ process.stdin.on('data', d => {
     if (buf.length < 4 + n) break;
     const msg = buf.subarray(4, 4 + n).toString('utf8'); buf = buf.subarray(4 + n);
     if (log) fs.appendFileSync(log, JSON.stringify(JSON.parse(msg)) + '\n');
-    const out = Buffer.from(JSON.stringify({ ok: true, version: '1.7' }));
+    const out = Buffer.from(JSON.stringify({ ok: true, version: '1.8' }));
     const len = Buffer.alloc(4); len.writeUInt32LE(out.length);
     process.stdout.write(Buffer.concat([len, out]));
   }

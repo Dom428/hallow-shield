@@ -34,14 +34,16 @@ namespace HallowShieldBridge
 
     public static class Bridge
     {
-        public const string Version = "1.7";
+        public const string Version = "1.8";
         public const string HostName = "com.hallow.shield";
         public const string ChromeId = "afghaliocnljjjegfnaonfghpjgpebni";        // from the "key" in Shield's manifest.json
         public const string FirefoxId = "hallow-shield@dom428.github.io";
         public const int MaxMessage = 64 * 1024;
         public static readonly TimeSpan Stale = TimeSpan.FromDays(2), Forget = TimeSpan.FromDays(30);
         public static readonly string[] Levels = { "basic", "optimal", "complete" };
-        public static readonly string[] Names = { "Chrome", "Edge", "Brave", "Opera", "Vivaldi", "Chromium", "Firefox" };
+        // 1.8: "Hallow Browser" too - its built-in Shield is reported by the browser itself (it writes status.json in this format);
+        // before 1.8 the bridge renamed that entry "Chrome" the next time another browser reported
+        public static readonly string[] Names = { "Chrome", "Edge", "Brave", "Opera", "Vivaldi", "Chromium", "Firefox", "Hallow Browser" };
 
         // %APPDATA%\HallowShield (HALLOW_SHIELD_STATUS_DIR for tests)
         public static string Dir

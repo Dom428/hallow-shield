@@ -40,9 +40,8 @@ const pickerCss = read('picker.js').match(/<style>([\s\S]*?)<\/style>/)[1];
 const files = { popup: read('popup.css'), options: read('options.css'), picker: pickerCss };
 const sel = { popup: ':root', options: ':root', picker: ':host' };
 
-test('1.7: the manifest and package say 1.7', () => {
-  assert.equal(mf.version, '1.7');
-  assert.equal(JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version, '1.7.0');
+test('1.7: the manifest and package agree on the version (1.8 checks the number itself)', () => {
+  assert.equal(JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version, mf.version + '.0');
 });
 
 test('light palette = the Hallow family light palette', () => {

@@ -347,6 +347,12 @@ export const SCRIPTLET_ALIASES = {
   ...Object.fromEntries(['json-edit', 'json-edit-fetch-response', 'json-edit-xhr-response', 'jsonl-edit-fetch-response', 'jsonl-edit-xhr-response',
     'json-edit-fetch-request', 'json-edit-xhr-request', 'edit-inbound-object', 'edit-outbound-object'].flatMap(n => [[n, n], ['trusted-' + n, 'trusted-' + n]])),
   'trusted-replace-argument': 'trusted-replace-argument', 'href-sanitizer': 'href-sanitizer', 'trusted-prevent-dom-bypass': 'trusted-prevent-dom-bypass',
+  // 1.8
+  ...Object.fromEntries(['trusted-replace-outbound-text', 'trusted-suppress-native-method', 'trusted-create-html', 'xml-prune', 'mpegdash-prune', 'm3u-prune',
+    'refresh-defuser', 'nobab', 'popads-dummy', 'popads.net', 'prevent-innerHTML', 'prevent-canvas', 'spoof-css', 'trusted-override-element-method',
+    'disable-newtab-links', 'set-cookie-reload', 'trusted-set-cookie-reload', 'prevent-dialog', 'prevent-navigation', 'prevent-clipboard-write',
+    'fingerprint2', 'edit-object-on-setter', 'trusted-edit-object-on-setter'].map(n => [n, n])),
+  'bab-defuser': 'nobab',
   // not a page script: Shield's cookie-banner clicker (clicker.js, isolated world) runs these, for the cookie lists only
   'trusted-click-element': 'trusted-click-element',
 };

@@ -32,7 +32,8 @@ const META = JSON.parse(fs.readFileSync(path.join(EXT, 'rules', 'meta.json'), 'u
 // (1.5: a group's generic / specific-generic stylesheet is only registered when it has rules - most generic ones are looked
 // up by class / id instead)
 const cssOf = g => { const c = g === 'main' ? META.cosmetic : META.groups[g].cosmetic; return (c.genericCss > 0 ? 1 : 0) + (c.specificGeneric > 0 ? 1 : 0); };
-const expectedScripts = groups => 1 + groups.reduce((n, g) => n + cssOf(g), 0) + bundles.filter(b => groups.includes(b.group || 'main')).length;
+// (1.8: + the scriptlets' code, "core", wherever any group's page fixes run)
+const expectedScripts = groups => 1 + groups.reduce((n, g) => n + cssOf(g), 0) + bundles.filter(b => groups.includes(b.group || 'main') || (b.group === '*' && groups.length)).length;
 
 const seen = [];
 const html = (title, body) => `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
@@ -150,6 +151,36 @@ const EDIT = `
     result.parsed = JSON.parse('{"a":1,"deep":{"trackingPixel":"x"}}');
     setTimeout(() => { const a = document.createElement('a'); a.id = 'late'; a.href = '/out?url=https%3A%2F%2Flate.example%2F'; a.textContent = 'late'; document.body.appendChild(a); }, 300);
   </script>`;
+// 1.8: the new scriptlets' page (s18.test; the same page on nos18.test shows what happens without them)
+const S18 = `
+  <div id="bait" class="ad-bait" style="display:none">bait</div>
+  <div id="parent-target"></div><div id="parent-later"></div>
+  <a id="nt" href="/s18" target="_blank">new tab</a>
+  <a id="sp" href="#sp" class="sponsor-link">sponsor</a>
+  <div id="ih"></div>
+  <dialog id="dlg"><div class="cookie-modal">cookies?</div></dialog>
+  <canvas id="cv"></canvas>
+  <script>
+    window.result = {};
+    const bait = document.getElementById('bait');
+    result.spoof = getComputedStyle(bait).display; result.spoofHeight = bait.getBoundingClientRect().height;
+    document.getElementById('ih').innerHTML = '<p>ad-loader recovery</p>'; result.ih = document.getElementById('ih').innerHTML;
+    result.canvas = document.getElementById('cv').getContext('2d') === null;
+    let clicks = 0; const sp = document.getElementById('sp'); sp.addEventListener('click', e => { clicks++; e.preventDefault(); }); sp.click(); result.override = clicks;
+    try { document.getElementById('dlg').showModal(); } catch (e) { }
+    result.dialog = document.getElementById('dlg').open;
+    try { localStorage.setItem('searchCount', '1'); result.suppress = 'set'; } catch (e) { result.suppress = 'threw'; }
+    try { localStorage.setItem('fine', '1'); result.fine = localStorage.getItem('fine'); } catch (e) { result.fine = 'threw'; }
+    result.outbound = atob(btoa('bad-ads-url')); result.outboundOk = atob(btoa('good'));
+    try { eval('window.babRan = true; /* BlockAdBlock */'); } catch (e) { } result.bab = !!window.babRan;
+    fetch('/s18/vast.xml').then(r => r.text()).then(x => { result.vast = x; });
+    const x = new XMLHttpRequest(); x.open('GET', '/s18/manifest.mpd'); x.onload = () => { result.mpd = x.responseText; }; x.send();
+    fetch('/s18/live.m3u8').then(r => r.text()).then(x => { result.m3u = x; });
+  </script>`;
+const VAST = '<?xml version="1.0"?><VAST version="3.0"><Ad id="pre"><InLine><AdTitle>ad</AdTitle></InLine></Ad><Extensions><Extension>keep</Extension></Extensions></VAST>';
+const MPD = '<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" mediaPresentationDuration="PT90S"><Period id="ad-1" start="PT0S"><BaseURL>https://ads.example/</BaseURL></Period><Period id="main" start="PT30S"><BaseURL>https://cdn.example/</BaseURL></Period></MPD>';
+const M3U8 = '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6.0,\nhttps://cdn.example/seg1.ts\n#EXTINF:6.0,\nhttps://ads.s18.test/ad1.ts\n#EXTINF:6.0,\nhttps://cdn.example/seg2.ts\n';
+const S18REFRESH = '<!doctype html><html><head><meta http-equiv="refresh" content="1;url=/s18away"><title>refresh</title></head><body>stay here</body></html>';
 const MF = `
   <div class="my-hide" id="mh">mine</div><div class="my-generic" id="mg">generic</div><div id="stay">stay</div>
   <script src="http://myblock.example/x.js"></script><script src="http://fine.example/lib.js"></script>`;
@@ -173,6 +204,12 @@ const server = http.createServer((req, res) => {
   if (u.pathname === '/cmpframe') return send('text/html', html('cmp', CMPFRAME));
   if (u.pathname === '/zapframe') return send('text/html', html('zapframe', ZAPFRAME));
   if (u.pathname === '/zapinner') return send('text/html', html('zapinner', ZAPINNER));
+  if (u.pathname === '/s18') return send('text/html', html('s18', S18));
+  if (u.pathname === '/s18/vast.xml') return send('application/xml', VAST);
+  if (u.pathname === '/s18/manifest.mpd') return send('application/dash+xml', MPD);
+  if (u.pathname === '/s18/live.m3u8') return send('application/vnd.apple.mpegurl', M3U8);
+  if (u.pathname === '/s18refresh') return send('text/html', S18REFRESH);
+  if (u.pathname === '/s18away') return send('text/html', html('away', '<p id="away">refreshed away</p>'));
   if (u.pathname.startsWith('/page')) return send('text/html', html(host, COMMON + (host.endsWith('news.test') ? NEWS : '')));
   if (u.pathname.endsWith('.json')) return send('application/json', '{"ads":true}');
   if (u.pathname.endsWith('.js')) return send('text/javascript', '');
@@ -810,6 +847,54 @@ await step('1.5 scriptlets: json-edit on fetch / XHR / JSON.parse, href-sanitize
   assert.equal(x.bypass, false); assert.equal(x.parsed.deep.trackingPixel, 'x');
   assert.equal(await o.getAttribute('#out', 'href'), '/out?url=https%3A%2F%2Fdest.example%2Farticle%3Fid%3D7');
   await o.close();
+});
+
+await step('1.8 scriptlets: spoof-css, prevent-innerHTML, prevent-canvas, trusted-override-element-method, prevent-dialog, trusted-suppress-native-method, trusted-replace-outbound-text, trusted-create-html, disable-newtab-links, xml-prune (CSS and xpath), m3u-prune, nobab', async () => {
+  const p = await visit('www.s18.test', '/s18', 900);
+  await until(async () => { const r = await result(p); return r.vast && r.mpd && r.m3u; }, 4000, 'the page\'s requests answered');
+  const r = await result(p);
+  console.log('     s18.test result:', JSON.stringify({ ...r, vast: r.vast.length, mpd: r.mpd.length, m3u: r.m3u.length }));
+  assert.equal(r.spoof, 'block', 'spoof-css: display'); assert.equal(r.spoofHeight, 50, 'spoof-css: height');
+  assert.equal(r.ih, '', 'prevent-innerHTML'); assert.equal(r.canvas, true, 'prevent-canvas');
+  assert.equal(r.override, 0, 'trusted-override-element-method: the sponsor link\'s click() did nothing');
+  assert.equal(r.dialog, false, 'prevent-dialog'); assert.equal(r.suppress, 'threw', 'trusted-suppress-native-method'); assert.equal(r.fine, '1', 'other calls go through');
+  assert.equal(r.outbound, 'clean', 'trusted-replace-outbound-text'); assert.equal(r.outboundOk, 'good');
+  assert.equal(r.bab, false, 'nobab');
+  assert.ok(!r.vast.includes('<Ad') && r.vast.includes('<Extension>keep</Extension>'), 'xml-prune (CSS): ' + r.vast);
+  assert.ok(!r.mpd.includes('ad-1') && !r.mpd.includes('mediaPresentationDuration') && r.mpd.includes('id="main"'), 'xml-prune (xpath, an attribute too): ' + r.mpd);
+  assert.ok(!r.m3u.includes('ads.s18.test') && r.m3u.includes('seg1.ts') && r.m3u.includes('seg2.ts'), 'm3u-prune: ' + r.m3u);
+  assert.equal(await p.textContent('#parent-target #made'), 'made', 'trusted-create-html');
+  assert.equal(await exists(p, 'gone'), false, 'trusted-create-html with a duration: removed again');
+  const before = ctx.pages().length;
+  await p.click('#nt'); await p.waitForTimeout(600);
+  assert.equal(ctx.pages().length, before, 'disable-newtab-links: no new tab');
+  await p.close();
+  for (const pg of ctx.pages().slice(before)) await pg.close();
+  // the same page without the filters
+  const o = await visit('www.nos18.test', '/s18', 900);
+  await until(async () => { const x = await result(o); return x.vast && x.mpd && x.m3u; }, 4000, 'answered');
+  const x = await result(o);
+  assert.equal(x.spoof, 'none'); assert.ok(x.ih.includes('ad-loader')); assert.equal(x.canvas, false); assert.equal(x.override, 1); assert.equal(x.dialog, true);
+  assert.equal(x.suppress, 'set'); assert.equal(x.outbound, 'bad-ads-url'); assert.equal(x.bab, true);
+  assert.ok(x.vast.includes('<Ad')); assert.ok(x.mpd.includes('ad-1')); assert.ok(x.m3u.includes('ads.s18.test')); assert.equal(await exists(o, 'made'), false);
+  await o.close();
+});
+await step('1.8 refresh-defuser: a <meta http-equiv="refresh"> doesn\'t take the page away (it does on a site without the filter)', async () => {
+  const p = await visit('www.s18.test', '/s18refresh', 2600);
+  assert.ok(p.url().endsWith('/s18refresh'), 'stayed: ' + p.url());
+  await p.close();
+  const o = await visit('www.nos18.test', '/s18refresh', 2600);
+  assert.ok(o.url().endsWith('/s18away'), 'refreshed without the filter: ' + o.url());
+  await o.close();
+});
+await step('1.8 page fixes split by site: core.js in the page, small loaders, and only this site\'s shard read', async () => {
+  const sl = bundles.filter(b => b.group !== '*');
+  assert.ok(bundles[0].id === 'core' && bundles[0].world === 'MAIN', 'core first');
+  assert.ok(sl.every(b => b.world === 'ISOLATED' && b.shards >= 1), 'loaders');
+  const ids = (await scripts()).map(c => c.id);
+  assert.ok(ids.includes('shield-sl-core'), ids.join(' '));
+  const all = await scripts(), core = all.find(c => c.id === 'shield-sl-core'), loader = all.find(c => c.id === 'shield-sl-tld-other');
+  assert.equal(core.world, 'MAIN'); assert.equal(loader.world || 'ISOLATED', 'ISOLATED');
 });
 
 const rgb = c => '#' + c.slice(0, 3).map(n => n.toString(16).padStart(2, '0')).join('');
