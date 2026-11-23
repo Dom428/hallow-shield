@@ -222,7 +222,7 @@ test('split page fixes: core.js has each scriptlet\'s code once and no module sy
   const b = siteBundle('t', PARTS, 'test');
   assert.ok(b.loader.length < 4000, 'loader ' + b.loader.length + ' bytes'); assert.doesNotMatch(b.loader, /function setConstant/);
 });
-test('split page fixes: the Bloom filter rarely sends a frame to a shard for nothing (< 0.1 % per key, .com-sized bundle)', () => {
+test('split page fixes: the Bloom filter rarely sends a frame to a shard for nothing (< 0.1% per key, .com-sized bundle)', () => {
   const hosts = {}; for (let i = 0; i < 15000; i++) hosts['site' + i + '.com'] = [0];
   const b = siteBundle('big', { 'set-constant': { args: [['a', '1']], hosts, exc: {} } }, 'big');
   const m = /shieldLoader\("big", (\d+), (\d+), "([^"]+)"/.exec(b.loader), M = Number(m[2]), bits = Buffer.from(m[3], 'base64');

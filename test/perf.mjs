@@ -5,7 +5,7 @@
 //   - page load time (navigation start -> load event end)
 //   - the content-script cost: the extra main-thread script time with Shield (Chrome's ScriptDuration metric, which
 //     counts Shield's content scripts and page fixes too), and the extra style / layout time (its hiding CSS)
-// It fails if Shield adds more than 15 % or more than 50 ms to the load time, or more than 50 ms of script time.
+// It fails if Shield adds more than 15% or more than 50 ms to the load time, or more than 50 ms of script time.
 // Each round is judged on its own; a round over budget gets up to two fresh rounds (noisy CI machines) before it fails.
 //   node test/perf.mjs              (PERF_RUNS=15 by default)
 import http from 'node:http';
@@ -106,7 +106,7 @@ function verdict() {
   const b = med('base'), s = med('shield');
   const over = s.load - b.load, pct = over / b.load * 100, script = s.script - b.script, style = s.style - b.style;
   const fail = [];
-  if (pct > BUDGET_PCT) fail.push(`load overhead ${pct.toFixed(1)} % > ${BUDGET_PCT} %`);
+  if (pct > BUDGET_PCT) fail.push(`load overhead ${pct.toFixed(1)}% > ${BUDGET_PCT}%`);
   if (over > BUDGET_MS) fail.push(`load overhead ${over.toFixed(1)} ms > ${BUDGET_MS} ms`);
   if (script > SCRIPT_MS) fail.push(`content-script cost ${script.toFixed(1)} ms > ${SCRIPT_MS} ms`);
   return { b, s, over, pct, script, style, fail, runs: samples.base.length };
@@ -119,13 +119,13 @@ for (let r = 0; r < 3; r++) {
   samples.base.length = 0; samples.shield.length = 0;
   await round(RUNS, r ? 1 : WARM);
   v = verdict(); rounds.push(v);
-  console.log(`round ${r + 1}: overhead ${v.over.toFixed(1)} ms (${v.pct.toFixed(1)} %), content-script cost ${v.script.toFixed(1)} ms${v.fail.length ? ' - over budget: ' + v.fail.join('; ') : ''}`);
+  console.log(`round ${r + 1}: overhead ${v.over.toFixed(1)} ms (${v.pct.toFixed(1)}%), content-script cost ${v.script.toFixed(1)} ms${v.fail.length ? ' - over budget: ' + v.fail.join('; ') : ''}`);
   if (!v.fail.length) break;
 }
 const f = x => x.toFixed(1);
 const lines = [
   `Hallow Shield ${mf.version} performance (round ${rounds.length}: ${v.runs} runs each, medians, ${LATENCY} ms per response; rules: ${meta.sample ? 'SAMPLE lists' : 'real lists, built ' + meta.built.slice(0, 10)}, ${meta.total} rules, generic hiding selectors ${meta.cosmetic.generic})`,
-  `  page load    without ${f(v.b.load)} ms   with Shield ${f(v.s.load)} ms   overhead ${f(v.over)} ms (${f(v.pct)} %)   budget ${BUDGET_PCT} % / ${BUDGET_MS} ms`,
+  `  page load    without ${f(v.b.load)} ms   with Shield ${f(v.s.load)} ms   overhead ${f(v.over)} ms (${f(v.pct)}%)   budget ${BUDGET_PCT}% / ${BUDGET_MS} ms`,
   `  DOMContentLoaded  without ${f(v.b.dcl)} ms   with ${f(v.s.dcl)} ms`,
   `  script time  without ${f(v.b.script)} ms   with ${f(v.s.script)} ms   content-script cost ${f(v.script)} ms   budget ${SCRIPT_MS} ms`,
   `  style+layout without ${f(v.b.style)} ms   with ${f(v.s.style)} ms   extra ${f(v.style)} ms`,

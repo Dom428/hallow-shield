@@ -40,10 +40,10 @@ Shield aims to block like Brave Shields and uBlock Origin Lite, within what Mani
   you browse, there's no Hallow server, and the extension never downloads anything. See [PRIVACY.md](PRIVACY.md).
   **Measured in CI** on every build (`npm run perf`): a heavy local page (about 4,000 elements, 140 images and
   scripts, 6 frames, 20 ms per response) loads in 513 ms without Shield and 559 ms with Shield at Optimal and the real
-  lists (1.5: +46 ms, 9 %; 1.8: +39 ms, 6.7 %, on a slower CI machine - Shield's content scripts and page fixes: 18 ms
+  lists (1.5: +46 ms, 9%; 1.8: +39 ms, 6.7%, on a slower CI machine - Shield's content scripts and page fixes: 18 ms
   of script time). With the same page served
   instantly it's +59 ms - most of that is the browser applying 24,000 blocking rules to 140 requests; Shield 1.4 added
-  about 300 ms to that instant page (see Honest limits). The build fails if Shield adds more than 15 % or 50 ms (a CI
+  about 300 ms to that instant page (see Honest limits). The build fails if Shield adds more than 15% or 50 ms (a CI
   machine has noisy minutes, so a round over budget gets up to two fresh rounds).
 - **More than plain blocking:** regex filters (checked by the browser at build time), `$redirect` to Shield's own
   harmless stand-ins (so pages that expect an ad library keep working), `$removeparam` (tracking parameters such as
@@ -205,7 +205,7 @@ popup. Hallow Hub and Hallow Remote read what it writes.
   the page loads; site-specific hiding still applies from the start.
 - **Page fixes, split by site (1.8):** the scriptlets' code (`rules/js/core.js`, 67 KB, the page's world) is in every frame
   where page fixes run; per bundle (`.com`, `.de`, ..., the small ones together, `name.*` entities) a small loader in
-  Shield's own world checks the frame's site, its parent domains and `name.*` against a Bloom filter (about 0.05 % false
+  Shield's own world checks the frame's site, its parent domains and `name.*` against a Bloom filter (about 0.05% false
   positives per name) and reads only that site's shard (`rules/sl/`, a few KB) from the extension - synchronously, so the
   fixes still run before the page's own scripts - and hands the filters to the code with a DOM event. A frame on a site
   with fixes pays that small read (about 1-2 ms); one without pays nothing. The shard files are listed as web-accessible
@@ -239,7 +239,7 @@ popup. Hallow Hub and Hallow Remote read what it writes.
   answered here"), `npm run smoke` (the real rules: they all load, real ad servers are blocked, uBO's
   real YouTube filters clean a fake YouTube page, and real cookie-notice and annoyance selectors hide boxes on a test
   page), `npm run perf` (a heavy local page with and without Shield at Optimal, with the real rules: fails if Shield adds
-  more than 15 % or 50 ms to the load time, or more than 50 ms of script time). CI runs all of them on every push and
+  more than 15% or 50 ms to the load time, or more than 50 ms of script time). CI runs all of them on every push and
   every Monday. `node tools/explain.mjs <url> <page>` shows which filters
   touch a request and what became of them.
 
