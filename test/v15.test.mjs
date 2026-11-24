@@ -335,5 +335,5 @@ test('the manifest and package.json agree on the version (1.5 or newer)', async 
   const fs = await import('node:fs');
   const mf = JSON.parse(fs.readFileSync(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.version, mf.version + '.0'); assert.ok(Number(mf.version.split('.')[1]) >= 5);
+  assert.equal(pkg.version, mf.version + '.0'); { const [a, b] = mf.version.split('.').map(Number); assert.ok(a > 1 || b >= 5, mf.version); }
 });

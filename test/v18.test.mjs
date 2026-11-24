@@ -23,7 +23,8 @@ const NEW = ['trusted-replace-outbound-text', 'trusted-suppress-native-method', 
   'nobab', 'popads-dummy', 'popads.net', 'prevent-innerHTML', 'prevent-canvas', 'spoof-css', 'trusted-override-element-method', 'disable-newtab-links', 'set-cookie-reload',
   'trusted-set-cookie-reload', 'prevent-dialog', 'prevent-navigation', 'prevent-clipboard-write', 'fingerprint2', 'edit-object-on-setter', 'trusted-edit-object-on-setter'];
 
-test('1.8: the manifest says 1.8', () => { assert.equal(mf.version, '1.8'); });
+// not pinned to one release: 1.8 or newer (numbers, not text)
+test('1.8: the manifest says 1.8 or newer', () => { const [a, b] = mf.version.split('.').map(Number); assert.ok(a > 1 || (a === 1 && b >= 8), mf.version); });
 test('every new scriptlet has its uBO name, is implemented, and bundles as a classic script; trusted ones only from trusted lists', () => {
   for (const n of NEW) {
     assert.equal(SCRIPTLET_ALIASES[n], n, n); assert.equal(typeof SCRIPTLETS[n], 'function', n);
